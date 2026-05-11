@@ -136,7 +136,7 @@ def collect_all():
         ('901Y009', '0', 'kr_cpi', '한국 CPI(소비자물가지수)', 'M'),
         ('121Y006', 'BECBLA0302', 'kr_mortgage_rate', '주택담보대출금리', 'M'),
         ('161Y005', 'BBHS00', 'kr_m2', '한국 M2 통화량', 'M'),
-        ('200Y102', '10111', 'kr_gdp', '한국 GDP(실질,계절조정,전기비)', 'Q') # ✨ 추가된 GDP 데이터
+        ('200Y102', '10111', 'kr_gdp', '한국 GDP', 'Q')
     ]
     
     for stat, item, col, desc, prd in ecos_indicators:
