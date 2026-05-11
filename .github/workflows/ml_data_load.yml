@@ -2,8 +2,8 @@ name: Daily ML Data Pipeline
 
 on:
   schedule:
-    # KST 기준 매일 아침 9시 (UTC 기준 00:00)
-    - cron: '0 0 * * *'
+    # KST 기준 매일 아침 8시, 저녁 20시 (UTC 기준 23:00, 11:00)
+    - cron: '0 11,23 * * *'
   
   # GitHub 페이지에서 수동으로 실행 버튼을 누를 수 있도록 허용
   workflow_dispatch: 
@@ -21,7 +21,6 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-            token: ${{ secrets.MY_GITHUB_TOKEN }}
             python-version: '3.11'
 
       - name: Install dependencies
