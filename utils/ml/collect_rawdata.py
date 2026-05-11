@@ -184,10 +184,9 @@ def make_yf_daily(df: pd.DataFrame) -> pd.DataFrame:
     else:
         d.index = pd.to_datetime(d.index)
 
-    d["gold_pct_change"] = d["gold"].pct_change() * 100
     d = d.reset_index()
     d["date"] = d["date"].dt.strftime("%Y-%m-%d")
-    cols = ["date", "gold", "gold_pct_change", "sp500", "dxy", "kospi200"]
+    cols = ["date", "gold", "sp500", "dxy", "kospi200"]
     return d[[c for c in cols if c in d.columns]]
 
 def make_yf_monthly(daily: pd.DataFrame) -> pd.DataFrame:
@@ -198,13 +197,10 @@ def make_yf_monthly(daily: pd.DataFrame) -> pd.DataFrame:
 
     numeric_cols = m.select_dtypes(include="number").columns.tolist()
     monthly = m[numeric_cols].resample("ME").mean()
-    monthly = monthly.drop(columns=["gold_pct_change"], errors="ignore")
-    if "gold" in monthly.columns:
-        monthly["gold_pct_change_monthly"] = monthly["gold"].pct_change() * 100
 
     monthly = monthly.reset_index()
     monthly["date"] = monthly["date"].dt.strftime("%Y-%m")
-    cols = ["date", "gold", "gold_pct_change_monthly", "sp500", "dxy", "kospi200"]
+    cols = ["date", "gold", "sp500", "dxy", "kospi200"]
     return monthly[[c for c in cols if c in monthly.columns]]
 
 # ═══════════════════════════════════════════════════
@@ -319,9 +315,8 @@ def collect_all():
         for df in reb_dfs[1:]:
             reb_merged = pd.merge(reb_merged, df, on='date', how='outer')
         reb_merged = reb_merged.sort_values('date').reset_index(drop=True)
-        reb_merged['house_price_idx_pct'] = reb_merged['house_price_idx'].pct_change() * 100
         
-        reb_cols = ['date', 'house_price_idx', 'house_price_idx_pct', 'apt_trade_count', 'buyer_dominance']
+        reb_cols = ['date', 'house_price_idx', 'apt_trade_count', 'buyer_dominance']
         reb_merged = reb_merged[[c for c in reb_cols if c in reb_merged.columns]]
         
         reb_path = os.path.join(save_dir, 'realestate_m.csv')

@@ -28,7 +28,7 @@ def load_and_split_data():
     # *CPI는 월별 데이터이므로 일별 병합 시 결측치가 많을 수 있음 (필요시 보간 처리 권장)
     gold_cols = [
         'date', 'gold', 'gold_pct_change', 'kr_usd_exchange', 
-        'wti_oil', 'dxy_proxy', 'vix', 'kospi200', 'sp500'
+        'wti_oil', 'dxy_proxy', 'vix', 'kospi200', 'sp500','kr_cpi'
     ]
     gold_data = df_d[[c for c in gold_cols if c in df_d.columns]].copy()
     gold_data.to_csv(os.path.join(data_dir, 'gold_data.csv'), index=False, encoding='utf-8-sig')
@@ -38,7 +38,7 @@ def load_and_split_data():
     re_cols = [
         'date', 'house_price_idx', 'house_price_idx_pct', 'kr_cpi', 
         'kr_unemployment', 'kr_base_rate', 'kr_mortgage_rate', 
-        'kospi200', 'apt_trade_count', 'kr_m2'
+        'kospi200', 'apt_trade_count', 'kr_m2', 'buyer_dominance'
     ]
     realestate_data = df_m[[c for c in re_cols if c in df_m.columns]].copy()
     realestate_data.to_csv(os.path.join(data_dir, 'realestate_data.csv'), index=False, encoding='utf-8-sig')
