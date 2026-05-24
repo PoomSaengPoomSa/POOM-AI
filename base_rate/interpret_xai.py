@@ -16,14 +16,14 @@ def interpret_xai():
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        print("❌ 오류: .env 파일에 OPENAI_API_KEY가 설정되지 않았습니다.")
+        print("[ERROR] 오류: .env 파일에 OPENAI_API_KEY가 설정되지 않았습니다.")
         return
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     results_dir = os.path.join(base_dir, 'results')
     prompt_path = os.path.join(base_dir, 'prompt', 'interpret_prompt.md')
 
-    print("📂 필요한 리소스 읽어오는 중...")
+    print("[XAI] 필요한 리소스 읽어오는 중...")
 
     # 프롬프트 로드
     with open(prompt_path, 'r', encoding='utf-8') as f:
@@ -35,7 +35,7 @@ def interpret_xai():
         df = pd.read_csv(csv_path)
         csv_text = df.head(15).to_csv(index=False)
     except Exception as e:
-        print(f"❌ 중요도 CSV 로드 실패: {e}")
+        print(f"[ERROR] 중요도 CSV 로드 실패: {e}")
         csv_text = "데이터 없음"
 
     misclass_csv_path = os.path.join(results_dir, 'misclassification_analysis.csv')
@@ -45,7 +45,7 @@ def interpret_xai():
             misclass_df = pd.read_csv(misclass_csv_path)
             misclass_text = "\n\n[오분류 케이스 별 SHAP 가중치 (텍스트 요약)]\n" + misclass_df.to_csv(index=False)
         except Exception as e:
-            print(f"❌ 오분류 CSV 로드 실패: {e}")
+            print(f"[ERROR] 오분류 CSV 로드 실패: {e}")
 
     beeswarm_csv_path = os.path.join(results_dir, 'shap_beeswarm.csv')
     beeswarm_text = ""
@@ -64,10 +64,10 @@ def interpret_xai():
             
             beeswarm_text = "\n\n[Beeswarm 분석 (클래스 및 피처별 SHAP 기여도 요약 - 피처값과 SHAP값의 상관계수)]\n" + summary_df.to_csv(index=False)
         except Exception as e:
-            print(f"❌ Beeswarm CSV 요약 실패: {e}")
+            print(f"[ERROR] Beeswarm CSV 요약 실패: {e}")
 
     # 2. OpenAI API 요청 메시지 구성
-    print(f"🤖 OpenAI GPT-4o 로 XAI 분석 요청 중 (CSV 데이터만 사용)...")
+    print(f"[XAI] OpenAI GPT-4o 로 XAI 분석 요청 중 (CSV 데이터만 사용)...")
     
     client = OpenAI(api_key=api_key)
 
@@ -103,10 +103,10 @@ def interpret_xai():
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(result_text)
 
-        print(f"\n✅ 분석 완료! 파일이 저장되었습니다: {output_path}")
+        print(f"\n[OK] 분석 완료! 파일이 저장되었습니다: {output_path}")
 
     except Exception as e:
-        print(f"❌ OpenAI API 호출 중 오류 발생: {e}")
+        print(f"[ERROR] OpenAI API 호출 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     interpret_xai()

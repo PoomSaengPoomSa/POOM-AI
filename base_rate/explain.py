@@ -1,71 +1,83 @@
 import os
-
 import pandas as pd
-
 import numpy as np
-
 import joblib
-
 import shap
-
 import matplotlib
+import pymysql
+from dotenv import load_dotenv
 
 matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
-
 from matplotlib import font_manager, rc
-
 from model import InterestRateEnsembleModel
-
 
 
 k=5
 
 # ── 한글 폰트 설정 ──
-
 font_path = 'C:/Windows/Fonts/malgun.ttf'
-
 if os.path.exists(font_path):
-
     font_name = font_manager.FontProperties(fname=font_path).get_name()
-
     rc('font', family=font_name)
-
 plt.rcParams['axes.unicode_minus'] = False
 
 
-
+def load_data_from_mysql():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(dotenv_path=os.path.join(base_dir, '.env'))
+    
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        raise ValueError("Missing database credentials in .env file.")
+        
+    DB_PORT = int(DB_PORT)
+    
+    connection = pymysql.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        port=DB_PORT,
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor
+    )
+    
+    try:
+        with connection.cursor() as cursor:
+            sql = "SELECT * FROM ml_baserate_preprocessed ORDER BY date_ym ASC"
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+    finally:
+        connection.close()
+        
+    df = pd.DataFrame(rows)
+    # Convert MySQL decimal objects/others to standard float64/int64 numeric types
+    for col in df.columns:
+        if col not in ['date_ym', 'label']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
 
 
 def explain_model():
-
     base_dir = os.path.dirname(os.path.abspath(__file__))
-
     models_dir  = os.path.join(base_dir, 'models')
-
     results_dir = os.path.join(base_dir, 'results')
-
     os.makedirs(results_dir, exist_ok=True)
 
-
-
     # ═══════════════════════════════════════════════
-
-    # 1. 모델 & 데이터 로드
-
+    # 1. 모델 & 데이터 로드 (MySQL Database)
     # ═══════════════════════════════════════════════
-
-    print("📂 분류 모델 로드 중...")
-
+    print("[XAI] 분류 모델 로드 중...")
     classifier = joblib.load(os.path.join(models_dir, 'classifier.pkl'))
 
-
-
-    df = pd.read_csv(os.path.join(base_dir, 'data', 'final_dataset.csv'),
-
-                     encoding='utf-8-sig')
-
+    df = load_data_from_mysql()
     df['date_ym'] = df['date_ym'].astype(str).str.strip()
 
 
@@ -128,7 +140,7 @@ def explain_model():
     # 2. SHAP 분석 (CatBoost 단일 모델 기준)
     # ═══════════════════════════════════════════════
     print(f"\n{'='*55}")
-    print("🔬 CatBoost 모델 SHAP 분석 중...")
+    print("[XAI] CatBoost 모델 SHAP 분석 중...")
     print(f"{'='*55}")
 
     import warnings
@@ -287,7 +299,7 @@ def explain_model():
     beeswarm_df = pd.DataFrame(beeswarm_records)
     beeswarm_csv_path = os.path.join(results_dir, 'shap_beeswarm.csv')
     beeswarm_df.to_csv(beeswarm_csv_path, index=False, encoding='utf-8-sig')
-    print(f"      💾 Beeswarm 데이터 CSV 저장 완료: {beeswarm_csv_path}")
+    print(f"      [CSV] Beeswarm 데이터 CSV 저장 완료: {beeswarm_csv_path}")
 
 
 
@@ -299,7 +311,7 @@ def explain_model():
 
     print(f"\n{'='*55}")
 
-    print("🔎 오분류 케이스 심층 분석")
+    print("[ANALYSIS] 오분류 케이스 심층 분석")
 
     print(f"{'='*55}")
 
@@ -321,7 +333,7 @@ def explain_model():
 
     if len(wrong_indices) == 0:
 
-        print("   오분류 케이스 없음! 🎉")
+        print("   오분류 케이스 없음! [OK]")
 
     else:
 
@@ -331,7 +343,7 @@ def explain_model():
             pred = class_names[int(cls_preds_test[idx])]
             proba = cls_proba_test[idx]
 
-            print(f"\n   📌 {date} (실제: {actual} → 예측: {pred})")
+            print(f"\n   [CASE] {date} (실제: {actual} → 예측: {pred})")
             print(f"      확률: 인하 {proba[0]:.1%}  동결 {proba[1]:.1%}  인상 {proba[2]:.1%}")
 
             actual_cls = int(y_test_label[idx])
@@ -388,11 +400,11 @@ def explain_model():
                 
                 plt.savefig(waterfall_path, dpi=150, bbox_inches='tight')
                 plt.close()
-                print(f"      📈 워터폴 플롯 저장 완료: {waterfall_filename}")
+                print(f"      [PLOT] 워터폴 플롯 저장 완료: {waterfall_filename}")
 
             except Exception as e:
                 # 워터폴 플롯 생성 실패 시 메시지 출력 후 다음 케이스로 진행
-                print(f"      ⚠️ 워터폴 플롯 생성 중 오류 발생: {e}")
+                print(f"      [WARNING] 워터폴 플롯 생성 중 오류 발생: {e}")
                 import traceback
                 traceback.print_exc() # 상세 오류 정보 출력 (선택 사항)
             # =========================================================================
@@ -428,9 +440,9 @@ def explain_model():
         misclass_df = pd.DataFrame(misclass_records)
         misclass_csv_path = os.path.join(results_dir, 'misclassification_analysis.csv')
         misclass_df.to_csv(misclass_csv_path, index=False, encoding='utf-8-sig')
-        print(f"      💾 오분류 상세 내역 저장 완료: {misclass_csv_path}")
+        print(f"      [CSV] 오분류 상세 내역 저장 완료: {misclass_csv_path}")
 
-    print(f"\n✅ SHAP XAI 분석 완료!")
+    print(f"\n[OK] SHAP XAI 분석 완료!")
 
 
 

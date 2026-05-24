@@ -38,9 +38,9 @@ class InterestRateEnsembleModel:
 
     # 시계열 분할 기준
 
-    TRAIN_END  = '202312'   # Train: ~2023.12
+    TRAIN_END  = '202404'   # Train: ~2024.04
 
-    TEST_START = '202401'   # Test:  2024.01~
+    TEST_START = '202505'   # Test:  2025.05~
 
 
 
