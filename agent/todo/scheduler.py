@@ -8,8 +8,20 @@ from apscheduler.triggers.cron import CronTrigger
 
 # DB 헬퍼 및 그래프 로더 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# c:\ITStudy\poom\ai\agent\todo -> c:\ITStudy\poom\back
-back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "back"))
+possible_paths = [
+    os.path.abspath(os.path.join(current_dir, "..", "..", "..")), # Docker poom 루트
+    os.path.abspath(os.path.join(current_dir, "..", "..", "..", "POOM-BACK")), # Docker POOM-BACK
+    os.path.abspath(os.path.join(current_dir, "..", "..", "..", "back")), # 윈도우 로컬
+]
+back_path = None
+for p in possible_paths:
+    # 해당 폴더 하위에 실제 데이터베이스 모듈이 실존하는지 검증
+    if os.path.exists(os.path.join(p, "app", "database.py")):
+        back_path = p
+        break
+if not back_path:
+    back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "back")) # Fallback
+
 if back_path not in sys.path:
     sys.path.insert(0, back_path)
 
