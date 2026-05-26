@@ -36,6 +36,8 @@ def goal_selector_node(state: AgentState) -> Dict[str, Any]:
     events = context_data.get("events", "이벤트 없음")
     histories = context_data.get("histories", "최근 상담 없음")
     notifications = context_data.get("notifications", "알림 없음")
+    ignored_history = context_data.get("ignored_history", "무시된 과거 추천 히스토리 없음")
+    scheduled_customers = str(context_data.get("scheduled_customers", []))
 
     # 시스템 프롬프트 포맷
     sys_prompt = GOAL_SELECTOR_SYSTEM_PROMPT.replace("{target_date}", target_date)
@@ -48,7 +50,9 @@ def goal_selector_node(state: AgentState) -> Dict[str, Any]:
         risks=risks,
         events=events,
         histories=histories,
-        notifications=notifications
+        notifications=notifications,
+        ignored_history=ignored_history,
+        scheduled_customers=scheduled_customers
     )
 
     messages = [

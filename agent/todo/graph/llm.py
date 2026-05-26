@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # 백엔드 패키지 경로 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
-back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "back"))
+back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "back"))
 load_dotenv(os.path.join(back_path, ".env"))
 
 logger = logging.getLogger(__name__)

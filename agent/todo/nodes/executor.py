@@ -62,6 +62,8 @@ def executor_node(state: AgentState) -> Dict[str, Any]:
 - 만기 및 생일 이벤트: {context_data.get('events')} (생일, 상품 만기, 결혼기념일 등 관계 형성 기념일을 적극 포착하십시오.)
 - 최근 상담 이력: {context_data.get('histories')}
 - 이미 발송된 알림: {context_data.get('notifications')}
+- 과거 무시(미등록)했던 AI To-Do 히스토리: {context_data.get('ignored_history')}
+- 이미 캘린더에 일정이 확보된 고객 ID 목록: {context_data.get('scheduled_customers')}
 - 추천 가능한 유효 담당 고객 ID 리스트: {valid_c_ids} (일정 생성 시 이 리스트 내의 c_id를 최우선 매칭하십시오.)
 
 ### [재계획 및 반성 지침 (Reflection Guidance)]
@@ -78,6 +80,11 @@ def executor_node(state: AgentState) -> Dict[str, Any]:
    - AUM 관련 목표 등은 `'KPI 기반'`으로 배정하십시오.
 4. 카테고리는 반드시 `'KPI 기반'`, `'상담 일정 제안'`, `'안부 연락 제안'`, `'신규 상품 분석'` 중 하나여야 합니다. (check constraint 제약조건 철저 준수)
 5. 각 일정의 제목은 50자 이내, 메모는 80자 이내로 정밀히 작성하십시오.
+6. **[중요] 이미 일정이 수립된 고객 리스트({context_data.get('scheduled_customers')})에 포함된 고객은 추가로 일정을 잡지 않도록 이번 추천에서 배제하십시오.**
+7. **[중요 - 스마트 중요도 감쇠 (Smart Decay)]**: 
+   - 과거 추천 중 날짜가 이미 기준일 이전으로 완전히 지나갔음에도 PB가 일정 등록을 하지 않은 고객과 제안({context_data.get('ignored_history')})은 **진짜 원하지 않는 것(거절)**으로 판단되므로 강력히 배제 및 후순위 감쇠 처리하십시오.
+   - 반면, 추천된 지 얼마 되지 않았거나 아직 실행 예정 기한이 많이 남아있어 단순 보류 상태인 미래의 추천들은 **시기상조 보류(Deferred)**된 것으로 아직 매우 신선한 추천이므로 정상적으로 재추천 대상으로 분류하십시오.
+8. **[중요 - 추천 다양성 및 카테고리 분배 규칙]**: 생성하는 5개 추천 일정에는 반드시 4가지 카테고리('KPI 기반', '상담 일정 제안', '안부 연락 제안', '신규 상품 분석')가 최소 1회 이상 골고루 포함되어 균형 있는 일정이 되도록 보장하십시오. 특정 카테고리가 5개 전체를 지배하는 쏠림 현상을 방지하십시오.
 
 [출력 형식]
 반드시 다음 **JSON 배열 형식**으로만 출력해 주세요.

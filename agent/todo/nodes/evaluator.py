@@ -91,6 +91,26 @@ def evaluator_node(state: AgentState) -> Dict[str, Any]:
     # 모든 검증을 완벽히 통과!
     logger.info("[Evaluator] 모든 추천 일정 검증 완료 (통과!). DB에 정식 적재를 진행합니다.")
 
+    # [중요] 중복 적재 방지 및 과거 무시된 To-Do 정리
+    # 신규 5개 일정을 등록하기 전에, u_id의 해당 기준일(target_date) 및 그 이전에 생성되었으나
+    # 등록되지 않은(is_checked == False) 기존 AI To-Do들을 데이터베이스에서 안전하게 정리(삭제)합니다.
+    try:
+        from app.models.ai_todo import AiTodo
+        with get_db_session() as db:
+            target_dt_obj = datetime.strptime(target_date, "%Y-%m-%d").date()
+            end_bound = datetime.combine(target_dt_obj, datetime.max.time())
+            
+            deleted_count = db.query(AiTodo).filter(
+                AiTodo.u_id == u_id,
+                AiTodo.is_checked == False,
+                AiTodo.execution_date <= end_bound
+            ).delete(synchronize_session=False)
+            db.commit()
+            if deleted_count > 0:
+                logger.info(f"[Evaluator] 이전 날짜 및 오늘 기준 미등록(무시된) 기존 AI To-Do {deleted_count}건을 삭제 정리했습니다. (중복 방지 및 UI 청정화 완료)")
+    except Exception as e:
+        logger.warning(f"[Evaluator] 기존 미등록 AI To-Do 정리 중 오류 발생 (진행 계속): {e}")
+
     saved_todos_info = []
     # DB에 영구 저장 (CreateScheduleTool 호출)
     for item in execution_results:
