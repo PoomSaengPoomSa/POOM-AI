@@ -1,15 +1,36 @@
-.env
-
-# Virtual Environment
+# Python Virtual Environments
 .venv/
 venv/
 env/
+ENV/
 
 # Python Cache
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Models & Plots
+# IDE & Environments
+.env
+.env.local
+.env.*
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# ML Caches & Outputs
+catboost_info/
+wandb/
+.web_cache/
+lightning_logs/
+
+# Databases
+*.db
+*.sqlite3
+
+# Models & Plots (from main branch)
 models/
 plots/
