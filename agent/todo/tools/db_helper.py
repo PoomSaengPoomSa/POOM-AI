@@ -2,10 +2,21 @@ import os
 import sys
 from contextlib import contextmanager
 
-# 백엔드 패키지 경로를 sys.path에 동적으로 추가하여 app.database 및 app.models를 재사용합니다.
+# 백엔드 패키지 경로를 sys.path에 동적으로 추가하여 app.database 및 app.models를 재사용합니다. (윈도우 back 및 Docker poom 루트 동적 실존 검증 매핑 지원)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# c:\ITStudy\poom\ai\agent\todo\tools -> c:\ITStudy\poom\back
-back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "back"))
+possible_paths = [
+    os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..")), # Docker poom 루트
+    os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "POOM-BACK")), # Docker POOM-BACK
+    os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "back")), # 윈도우 로컬
+]
+back_path = None
+for p in possible_paths:
+    # 해당 폴더 하위에 실제 데이터베이스 모듈이 실존하는지 검증
+    if os.path.exists(os.path.join(p, "app", "database.py")):
+        back_path = p
+        break
+if not back_path:
+    back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "back")) # Fallback
 
 if back_path not in sys.path:
     sys.path.insert(0, back_path)
