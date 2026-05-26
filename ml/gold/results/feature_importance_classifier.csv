@@ -1,0 +1,69 @@
+﻿feature,feature_kr,importance
+sp500_kospi200_spread,S&P500-KOSPI200 스프레드,0.073270015
+gold_change_rate_lag_2,국제 금 선물 가격 변화율 2일전,0.04520704
+gold_change_rate,국제 금 선물 가격 변화율,0.044444934
+kr_usd_exchange_change_rate_lag_3,원/달러 환율 변화율 3일전,0.034519263
+gold_dxy_interaction,금값-달러인덱스 상호작용,0.028048372
+kospi200,코스피 200 지수,0.02488428
+gold_dxy_interaction_lag_2,금값-달러인덱스 상호작용 2일전,0.024660498
+dxy_proxy,달러 인덱스,0.023339665
+sp500,S&P 500 지수,0.022577042
+sp500_change_rate,S&P 500 지수 변화율,0.02194368
+kospi200_change_rate_lag_3,코스피 200 지수 변화율 3일전,0.020081539
+kospi200_change_rate_lag_2,코스피 200 지수 변화율 2일전,0.019940667
+gold_change_rate_ema_5_lag_1,금값 변화율 EMA(5일) 1일전,0.019716414
+gold,국제 금 선물 가격,0.018744946
+kr_usd_exchange_change_rate,원/달러 환율 변화율,0.018586755
+sp500_kospi200_spread_lag_2,S&P500-KOSPI200 스프레드 2일전,0.018502565
+gold_change_rate_ema_5,금값 변화율 EMA(5일),0.017895402
+wti_oil_change_rate_lag_1,WTI 서부텍사스유 가격 변화율 1일전,0.016854709
+wti_oil,WTI 서부텍사스유 가격,0.016407682
+sp500_change_rate_lag_3,S&P 500 지수 변화율 3일전,0.015906312
+wti_oil_change_rate,WTI 서부텍사스유 가격 변화율,0.015577081
+kr_usd_exchange_change_rate_lag_1,원/달러 환율 변화율 1일전,0.015108365
+gold_macd_lag_2,금값 MACD 2일전,0.015003902
+gold_macd_signal_lag_2,금값 MACD 시그널 2일전,0.014932437
+gold_change_rate_sma_20,금값 변화율 SMA(20일이동평균),0.013842749
+gold_rsi_14_lag_2,금값 RSI(14일) 2일전,0.013370481
+vix,VIX 변동성 지수,0.01266162
+gold_change_rate_std_20,금값 변동성(20일표준편차),0.012551775
+gold_change_rate_ema_5_lag_2,금값 변화율 EMA(5일) 2일전,0.0114061115
+dxy_proxy_change_rate,달러 인덱스 변화율,0.011019519
+kospi200_change_rate,코스피 200 지수 변화율,0.009955928
+vix_change_rate,VIX 변동성 지수 변화율,0.0094488105
+gold_change_rate_lag_1,국제 금 선물 가격 변화율 1일전,0.008988784
+gold_change_rate_ema_20_lag_3,금값 변화율 EMA(20일) 3일전,0.008190557
+kr_cpi,한국 소비자물가지수,0.008181917
+kr_usd_exchange,원/달러 환율,0.0080657005
+kospi200_change_rate_lag_1,코스피 200 지수 변화율 1일전,0.007872668
+kr_usd_exchange_change_rate_lag_2,원/달러 환율 변화율 2일전,0.0075068697
+dxy_proxy_change_rate_lag_3,달러 인덱스 변화율 3일전,0.0073563857
+gold_dxy_interaction_lag_3,금값-달러인덱스 상호작용 3일전,0.0071955295
+vix_change_rate_lag_1,VIX 변동성 지수 변화율 1일전,0.006430547
+gold_macd_signal,금값 MACD 시그널,0.0063856505
+sp500_change_rate_lag_1,S&P 500 지수 변화율 1일전,0.006221654
+gold_change_rate_ema_20_lag_1,금값 변화율 EMA(20일) 1일전,0.0061764433
+vix_change_rate_lag_3,VIX 변동성 지수 변화율 3일전,0.005810593
+sp500_kospi200_spread_lag_1,S&P500-KOSPI200 스프레드 1일전,0.005673049
+gold_dxy_interaction_lag_1,금값-달러인덱스 상호작용 1일전,0.0053697596
+gold_change_rate_std_5,금값 변동성(5일표준편차),0.0053123906
+gold_change_rate_sma_5,금값 변화율 SMA(5일이동평균),0.0050268145
+gold_change_rate_ema_20_lag_2,금값 변화율 EMA(20일) 2일전,0.0050145006
+wti_oil_change_rate_lag_2,WTI 서부텍사스유 가격 변화율 2일전,0.0049984003
+gold_change_rate_ema_20,금값 변화율 EMA(20일),0.004891263
+gold_macd_lag_1,금값 MACD 1일전,0.0048870854
+vix_change_rate_lag_2,VIX 변동성 지수 변화율 2일전,0.0046082614
+sp500_change_rate_lag_2,S&P 500 지수 변화율 2일전,0.0041365093
+gold_rsi_14_lag_3,금값 RSI(14일) 3일전,0.0040927106
+gold_macd_lag_3,금값 MACD 3일전,0.0040776366
+gold_rsi_14_lag_1,금값 RSI(14일) 1일전,0.0040692985
+gold_change_rate_ema_5_lag_3,금값 변화율 EMA(5일) 3일전,0.003924924
+dxy_proxy_change_rate_lag_2,달러 인덱스 변화율 2일전,0.0037924147
+gold_macd_signal_lag_1,금값 MACD 시그널 1일전,0.00374657
+sp500_kospi200_spread_lag_3,S&P500-KOSPI200 스프레드 3일전,0.0035218974
+wti_oil_change_rate_lag_3,WTI 서부텍사스유 가격 변화율 3일전,0.0032662428
+gold_rsi_14,금값 RSI(14일),0.0030975349
+gold_macd_signal_lag_3,금값 MACD 시그널 3일전,0.0030763904
+gold_macd,금값 MACD,0.0028538627
+dxy_proxy_change_rate_lag_1,달러 인덱스 변화율 1일전,0.0027991417
+gold_change_rate_lag_3,국제 금 선물 가격 변화율 3일전,0.0017120829

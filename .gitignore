@@ -1,23 +1,36 @@
-# Python 가상환경 및 캐시
+# Python Virtual Environments
 .venv/
 venv/
 env/
+ENV/
+
+# Python Cache
 __pycache__/
 *.py[cod]
 *$py.class
 
-# IDE 설정 및 환경변수
+# IDE & Environments
 .env
 .env.local
+.env.*
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
 
-# 머신러닝 임시 로그 및 산출물
+# ML Caches & Outputs
 catboost_info/
 wandb/
 .web_cache/
+lightning_logs/
 
-# 임시 파일 및 DB
+# Databases
 *.db
 *.sqlite3
-.venv/
+
+# Models & Plots (from main branch)
+models/
+plots/
