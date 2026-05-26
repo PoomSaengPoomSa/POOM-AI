@@ -1,0 +1,23 @@
+# Python 가상환경 및 캐시
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE 설정 및 환경변수
+.env
+.env.local
+.vscode/
+.idea/
+
+# 머신러닝 임시 로그 및 산출물
+catboost_info/
+wandb/
+.web_cache/
+
+# 임시 파일 및 DB
+*.db
+*.sqlite3
+.venv/

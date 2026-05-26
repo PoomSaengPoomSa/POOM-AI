@@ -196,7 +196,7 @@ def explain_model():
 
     ax.set_yticks(range(len(top_k)-1, -1, -1))
 
-    ax.set_yticklabels(top_k['feature_kr'].values, fontsize=11)
+    ax.set_yticklabels(top_k['feature'].values, fontsize=11)
 
     ax.set_xlabel('평균 |SHAP value|', fontsize=12)
 
@@ -222,20 +222,12 @@ def explain_model():
 
    
 
-    plt.figure(figsize=(12, 8))
-
     shap.summary_plot(
-
         shap_by_class, X_test,
-
-        feature_names=kr_feature_names,
-
+        feature_names=list(X_test.columns),
         class_names=class_names,
-
         max_display=15, show=False,
-
         plot_type="bar"
-
     )
 
     plt.legend(fontsize=10) # 숫자를 줄이면 더 작아집니다 (예: 8, 9, 10)
@@ -268,7 +260,7 @@ def explain_model():
 
         shap.summary_plot(
             shap_by_class[cls_idx], X_test,
-            feature_names=kr_feature_names,
+            feature_names=list(X_test.columns),
             max_display=15, show=False
         )
 
@@ -362,7 +354,7 @@ def explain_model():
                     values=sv, # SHAP 값 (n_features)
                     base_values=actual_base_value, # 기본값 (스칼라)
                     data=X_test.iloc[idx].values, # 피처 값 (n_features)
-                    feature_names=kr_feature_names # 피처 이름 리스트 (n_features)
+                    feature_names=list(X_test.columns) # 피처 이름 리스트 (n_features)
                 )
 
                 # 플롯 생성

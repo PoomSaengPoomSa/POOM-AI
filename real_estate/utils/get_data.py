@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 
 def collect_all():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    load_dotenv(dotenv_path=os.path.join(base_dir, '.env'))
+    # back 폴더의 .env를 직접 경유하여 동기화
+    back_env_path = os.path.join(os.path.dirname(base_dir), 'back', '.env')
+    load_dotenv(dotenv_path=back_env_path)
 
     # Load DB credentials
     DB_USER = os.getenv('DB_USER')
