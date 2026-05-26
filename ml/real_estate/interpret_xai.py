@@ -6,8 +6,8 @@ from openai import OpenAI
 def run_interpret():
     # 1. 환경변수 및 기본 경로 설정
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    # back 폴더의 .env를 직접 경유하여 동기화
-    back_env_path = os.path.join(os.path.dirname(base_dir), 'back', '.env')
+    # back 폴더의 .env를 직접 경유하여 동기화 (3레벨 위 부모 디렉토리인 POOM 기준)
+    back_env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../back/.env'))
     load_dotenv(dotenv_path=back_env_path)
     
     api_key = os.getenv("OPENAI_API_KEY")
