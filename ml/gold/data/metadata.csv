@@ -1,0 +1,10 @@
+﻿컬럼영문명,컬럼한글명,출처,설명
+loaded_date,데이터 기준 일자,DB/ml_gold_raw,데이터 수집 및 기준 일자 (YYYY-MM-DD 형식)
+gold,국제 금 선물 가격,DB/ml_gold_raw,온스당 국제 금 선물 가격 ($)
+kr_usd_exchange,원/달러 환율,DB/ml_gold_raw,원/미달러 하루 종가 환율 (원)
+wti_oil,WTI 서부텍사스유 가격,DB/ml_gold_raw,WTI 원유 현물 종가 가격 ($)
+dxy_proxy,달러 인덱스,DB/ml_gold_raw,미국 달러화 가치를 보여주는 달러 인덱스 (DXY) 프록시
+vix,VIX 변동성 지수,DB/ml_gold_raw,CBOE 변동성 지수 (S&P 500 옵션 기반 시장 불안 심리 지표)
+kospi200,코스피 200 지수,DB/ml_gold_raw,한국 주식시장 대표 KOSPI 200 종가 지수
+sp500,S&P 500 지수,DB/ml_gold_raw,미국 주식시장 대표 S&P 500 종가 지수
+kr_cpi,한국 소비자물가지수,DB/ml_gold_raw,한국 소비자물가지수 총지수 (2020=100)
