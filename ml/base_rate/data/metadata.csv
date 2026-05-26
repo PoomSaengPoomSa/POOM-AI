@@ -1,0 +1,11 @@
+﻿컬럼영문명,컬럼한글명,출처,설명
+date_ym,기준연월,DB/ml_baserate_raw,데이터 기준 연월 (YYYYMM 형식)
+kr_base_rate,한국 기준금리,DB/ml_baserate_raw,"한국은행 기준금리 (%, 722Y001). 예측 타겟의 원천"
+kr_cpi,한국 소비자물가지수,DB/ml_baserate_raw,"소비자물가지수 총지수 (2020=100, 901Y010). 인플레이션 지표"
+kr_unemployment,한국 실업률,DB/ml_baserate_raw,"한국 월별 실업률 (%, LRHUTTTTKRM156S). 노동시장 지표"
+kr_usd_exchange,원/달러 환율,DB/ml_baserate_raw,"원/미달러 월평균 환율 (원, DEXKOUS). 외환시장 지표"
+kr_m2,한국 M2 통화량,DB/ml_baserate_raw,"한국 광의통화 M2 (원, MYAGM2KRM189N). 유동성 지표"
+kr_gdp_index,한국 GDP 지수,DB/ml_baserate_raw,"한국 실질GDP 지수 (분기→월 보간, NAEXKP01KRQ661S). 경기 지표"
+us_fed_rate,미국 연방기금금리,DB/ml_baserate_raw,"미국 연방기금 목표금리 (%, FEDFUNDS). 글로벌 금리 기준"
+vix,VIX 변동성 지수,DB/ml_baserate_raw,CBOE 변동성 지수 월평균 (VIXCLS). 시장 불안 심리 지표
+wti_oil,WTI 유가,DB/ml_baserate_raw,"WTI 원유 현물가격 월평균 ($, DCOILWTICO). 원자재·에너지 지표"
