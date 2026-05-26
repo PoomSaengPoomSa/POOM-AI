@@ -238,17 +238,17 @@ def preprocess():
     # -----------------------------------------
     # 7. Offloaded Dimensionality Reduction & Feature Selection (Data Leakage Free)
     # -----------------------------------------
-    print("\n[Feature Selection] Running VIF and Random Forest Feature Selection...")
+    # 7. Random Forest Feature Selection (VIF Bypassed)
+    # -----------------------------------------
+    print("\n[Feature Selection] Running Random Forest Feature Selection (VIF Bypassed)...")
     
     import sys
     sys.path.insert(0, base_dir)
     from model import InterestRateEnsembleModel
-    from utils.dimensionality_reduction import calculate_vif_iteratively
     from sklearn.ensemble import RandomForestClassifier
     import joblib
     
     cfg = InterestRateEnsembleModel
-    
     
     # 1) Slice Train Dataset down to ~cfg.TRAIN_END to avoid Data Leakage
     train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
@@ -257,15 +257,8 @@ def preprocess():
     X_train_all = train_df.drop(columns=drop_cols)
     y_train_label = train_df['label_encoded']
     
-    # 2) Calculate VIF iteratively using only Train set
-    print(f"   Removing multicollinearity based on VIF on Train set (~{cfg.TRAIN_END})...")
-    removed_features, _ = calculate_vif_iteratively(X_train_all, n_features=N_FEATURES, threshold=10.0)
-    
-    X_train_vif = X_train_all.drop(columns=removed_features)
-    print(f"   VIF removal completed! Remaining features: {X_train_vif.shape[1]}")
-    
-    # 3) Random Forest Ensemble Feature Selection using Train set
-    print(f"   Selecting top {N_FEATURES} features using 20 Random Forest ensembles...")
+    # 2) Random Forest Ensemble Feature Selection using Train set (using all features directly)
+    print(f"   Selecting top {N_FEATURES} features using 20 Random Forest ensembles from all {X_train_all.shape[1]} features...")
     importances_list = []
     for i in range(20):
         rf = RandomForestClassifier(
@@ -275,13 +268,13 @@ def preprocess():
             class_weight='balanced',
             n_jobs=-1
         )
-        rf.fit(X_train_vif, y_train_label)
+        rf.fit(X_train_all, y_train_label)
         importances_list.append(rf.feature_importances_)
         
     avg_importances = np.mean(importances_list, axis=0)
     
     feat_imp = pd.DataFrame({
-        'feature': X_train_vif.columns,
+        'feature': X_train_all.columns,
         'importance': avg_importances
     }).sort_values('importance', ascending=False)
     
@@ -291,7 +284,7 @@ def preprocess():
     for i, r in feat_imp.head(N_FEATURES).iterrows():
         print(f"     - {r['feature']}: {r['importance']:.4f}")
         
-    # 4) Dump selected features list to pkl for test/explain scripts downstream
+    # 3) Dump selected features list to pkl for test/explain scripts downstream
     models_dir = os.path.join(base_dir, 'models')
     os.makedirs(models_dir, exist_ok=True)
     joblib.dump(selected_features, os.path.join(models_dir, 'feature_names.pkl'))
