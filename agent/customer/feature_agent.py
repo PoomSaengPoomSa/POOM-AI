@@ -69,7 +69,7 @@ class ContextSelection(BaseModel):
 class ProductMatchingDetail(BaseModel):
     product_id: int = Field(description="주력 상품 ID (pd_id)")
     product_name: str = Field(description="주력 상품 명칭")
-    is_suitable: int = Field(description="적합성 여부 (적합=1, 부적합=0)")
+    is_suitable: int = Field(description="적합성 여부 (적합=1, 부적합=0, 보유 중=2)")
     reason: str = Field(description="개인화된 맞춤형 추천/제외 이유 (PB 상담 멘트용)")
 
 class ProductMatchingList(BaseModel):
@@ -153,7 +153,7 @@ def extract_features_and_determine_context_node(state: Agent2State) -> Dict[str,
             "추가로 조회해야 할 내부 데이터베이스 정보 도구를 판단하는 의사결정 에이전트입니다.\n\n"
             "추가 조회 가능한 맥락 정보 목록:\n"
             "1. `get_customer_relationship` (가족 관계): 상담에 배우자, 자녀 교육, 상속, 결혼 등 가족/가구원 관련 이슈가 직접 언급되었을 때만 가져옵니다.\n"
-            "2. `get_customer_active_products` (이미 보유 중인 상품): 고객이 이미 가입한 상품 정보를 조회하여 중복 추천을 막아야 할 필요가 있을 때 가져옵니다.\n"
+            "2. `get_customer_active_products` (이미 보유 중인 상품): 상품을 추천할 때 이미 보유 중인 상품과의 중복 추천을 원천 차단하기 위해 반드시 참(True)으로 설정하여 조회합니다.\n"
             "3. `get_customer_accounts` (예적금 계좌 잔액): 상담에 통장 정리, 특정 계좌 잔액 리밸런싱, 예치금 재투자가 언급되었을 때 가져옵니다."
         )
 
@@ -285,7 +285,35 @@ def match_products_node(state: Agent2State) -> Dict[str, Any]:
     relationship = state.get("customer_relationship", []) if context_selection.get("call_get_customer_relationship") else None
     accounts = state.get("customer_accounts", []) if context_selection.get("call_get_customer_accounts") else None
 
-    # Format input data
+    # Divide products into held and to-evaluate lists
+    held_product_ids = set()
+    if active_products:
+        held_product_ids = {ap["pd_id"] for ap in active_products}
+
+    held_products = []
+    to_evaluate_products = []
+    for p in main_products:
+        if p["pd_id"] in held_product_ids:
+            held_products.append(p)
+        else:
+            to_evaluate_products.append(p)
+
+    matchings = []
+    # Auto-populate matching results for held products
+    for p in held_products:
+        matchings.append({
+            "product_id": p["pd_id"],
+            "product_name": p["name"],
+            "is_suitable": 2,
+            "reason": "고객님이 보유 중인 상품입니다."
+        })
+
+    # If there are no products left to evaluate, skip LLM entirely
+    if not to_evaluate_products:
+        print(f"   [LLM Skip] All main products are already held by customer {customer_id}. Skipping LLM matching.")
+        return {"product_matchings": matchings}
+
+    # Format inputs for remaining products
     features_list = []
     for f in features_1m:
         features_list.append(f"[{f['category']}] {f['contents']}")
@@ -317,7 +345,7 @@ def match_products_node(state: Agent2State) -> Dict[str, Any]:
         accounts_str = "[참고] 에이전트 수집 제외: 계좌별 잔액 정보가 적합성 매칭 데이터에서 제외되었습니다."
 
     prod_list = []
-    for idx, p in enumerate(main_products, 1):
+    for idx, p in enumerate(to_evaluate_products, 1):
         prod_list.append(
             f"--- [주력 상품 {idx}] ---\n"
             f"- 상품 ID (pd_id): {p['pd_id']}\n"
@@ -332,15 +360,12 @@ def match_products_node(state: Agent2State) -> Dict[str, Any]:
 
     try:
         system_prompt = load_prompt("product_matching_system.md")
-        # Enhance system prompt rules to handle dynamic context logic
+        # Enhance system prompt rules to handle dynamic context logic (removed held products rule as they are handled in python)
         dynamic_matching_rules = (
             "\n\n## [중요 추가 매칭 규칙]\n"
-            "1. 만약 아래 '보유 중인 상품 목록'에 주력 상품과 동일한 상품(동일 상품 ID 혹은 동일 명칭)이 명시되어 있는 경우, "
-            "이미 가입한 상품의 중복 가입을 방지하기 위해 반드시 적합성 여부를 부적합(is_suitable = 0)으로 평가해야 합니다. "
-            "이 경우 추천 사유(reason)에 '고객님이 이미 가입하고 보유 중이신 상품이므로 추천에서 제외합니다.' 등의 사유를 분명히 작성해 주세요.\n"
-            "2. 가족 관계 정보가 제공된 경우, 가구원의 생일, 자녀의 나이, 배우자 여부 등을 상품의 target_customer 및 특징과 대조하여 "
+            "1. 가족 관계 정보가 제공된 경우, 가구원의 생일, 자녀의 나이, 배우자 여부 등을 상품의 target_customer 및 특징과 대조하여 "
             "가족 결혼자금 준비, 자녀 학자금 마련, 은퇴 부부 생활 자금 등 개인화된 시나리오 기반의 적합도(1)를 추천 사유와 함께 작성해 주십시오.\n"
-            "3. 계좌별 잔액 정보가 제공된 경우, 특정 통장의 가용 자금 여유가 상품 가입 조건에 맞는지 확인하여 구체적인 예치 권고 사유를 제안하십시오."
+            "2. 계좌별 잔액 정보가 제공된 경우, 특정 통장의 가용 자금 여유가 상품 가입 조건에 맞는지 확인하여 구체적인 예치 권고 사유를 제안하십시오."
         )
         system_prompt += dynamic_matching_rules
 
@@ -379,7 +404,6 @@ def match_products_node(state: Agent2State) -> Dict[str, Any]:
         chain = prompt | structured_llm
         result: ProductMatchingList = chain.invoke({"user_content": dynamic_user_prompt})
 
-        matchings = []
         for m in result.matchings:
             matchings.append({
                 "product_id": m.product_id,
