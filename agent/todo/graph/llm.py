@@ -24,6 +24,16 @@ if not back_path:
 
 load_dotenv(os.path.join(back_path, ".env"))
 
+# LangSmith 환경변수 명칭 동적 매핑 지원 (LANGSMITH_ -> LANGCHAIN_ 표준 호환)
+if os.getenv("LANGSMITH_TRACING") is not None:
+    os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING")
+if os.getenv("LANGSMITH_API_KEY") is not None:
+    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY")
+if os.getenv("LANGSMITH_ENDPOINT") is not None:
+    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT")
+if os.getenv("LANGSMITH_PROJECT") is not None:
+    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT")
+
 logger = logging.getLogger(__name__)
 
 class HeuristicFallbackLLM:
