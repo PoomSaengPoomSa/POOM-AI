@@ -22,17 +22,22 @@ for p in possible_paths:
 if not back_path:
     back_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "back")) # Fallback
 
+# 1차: 백엔드(POOM-BACK) 폴더의 .env 로드 시도
 load_dotenv(os.path.join(back_path, ".env"))
+
+# 2차: 에어플로우 도커 환경일 경우, 컨테이너 루트에 마운트된 /opt/airflow/.env 추가 로드로 완벽 방어
+if not os.getenv("OPENAI_API_KEY") or not os.getenv("LANGSMITH_API_KEY"):
+    load_dotenv("/opt/airflow/.env")
 
 # LangSmith 환경변수 명칭 동적 매핑 지원 (LANGSMITH_ -> LANGCHAIN_ 표준 호환)
 if os.getenv("LANGSMITH_TRACING") is not None:
-    os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING")
+    os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING").strip('"\'')
 if os.getenv("LANGSMITH_API_KEY") is not None:
-    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY")
+    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY").strip('"\'')
 if os.getenv("LANGSMITH_ENDPOINT") is not None:
-    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT")
+    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT").strip('"\'')
 if os.getenv("LANGSMITH_PROJECT") is not None:
-    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT")
+    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT").strip('"\'')
 
 logger = logging.getLogger(__name__)
 
