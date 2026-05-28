@@ -1,14 +1,13 @@
 import os
 import pandas as pd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
 
 def run_interpret():
     # 1. 환경변수 및 기본 경로 설정
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    # back 폴더의 .env를 직접 경유하여 동기화 (3레벨 위 부모 디렉토리인 POOM 기준)
-    back_env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../back/.env'))
-    load_dotenv(dotenv_path=back_env_path)
+    # 로컬 .env 또는 상위 폴더 탐색을 통한 통합 .env 로드
+    load_dotenv(find_dotenv())
     
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:

@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import pymysql
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -24,7 +24,11 @@ plt.rcParams['axes.unicode_minus'] = False
 
 def load_data_from_mysql():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    load_dotenv(dotenv_path=os.path.join(base_dir, '.env'))
+    env_path = os.path.join(base_dir, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv(find_dotenv())
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')
     DB_HOST = os.getenv('DB_HOST')

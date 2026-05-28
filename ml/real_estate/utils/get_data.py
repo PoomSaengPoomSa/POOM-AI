@@ -1,13 +1,12 @@
 import os
 import pymysql
 import pandas as pd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 def collect_all():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # back 폴더의 .env를 직접 경유하여 동기화 (4레벨 위 부모 디렉토리인 POOM 기준)
-    back_env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../back/.env'))
-    load_dotenv(dotenv_path=back_env_path)
+    # 로컬 .env 또는 상위 폴더 탐색을 통한 통합 .env 로드
+    load_dotenv(find_dotenv())
 
     # Load DB credentials
     DB_USER = os.getenv('DB_USER')

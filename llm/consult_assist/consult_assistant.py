@@ -2,12 +2,15 @@ import os
 from typing import List
 from pydantic import BaseModel, Field
 from openai import OpenAI
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# 현재 파일 기준 경로 설정
+# 현재 파일 기준 경로 설정 혹은 상위 폴더 탐색을 통한 .env 로드
 current_dir = os.path.dirname(os.path.abspath(__file__))
 dotenv_path = os.path.join(current_dir, ".env")
-load_dotenv(dotenv_path)
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    load_dotenv(find_dotenv())
 
 class ConsultationReport(BaseModel):
     key_contents: List[str] = Field(

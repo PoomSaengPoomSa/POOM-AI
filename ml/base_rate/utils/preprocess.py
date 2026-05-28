@@ -2,14 +2,18 @@ import os
 import pandas as pd
 import numpy as np
 import pymysql
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 N_FEATURES = 10
 
 
 def load_raw_data_from_mysql():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    load_dotenv(dotenv_path=os.path.join(base_dir, '.env'))
+    env_path = os.path.join(base_dir, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv(find_dotenv())
     
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')
@@ -320,8 +324,12 @@ def preprocess():
     print("   All numeric columns rounded to 4 decimal places.")
 
     # 2) DB connection credentials from environment variables
-    from dotenv import load_dotenv
-    load_dotenv(dotenv_path=os.path.join(base_dir, '.env'))
+    from dotenv import load_dotenv, find_dotenv
+    env_path = os.path.join(base_dir, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv(find_dotenv())
     
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')

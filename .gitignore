@@ -34,3 +34,16 @@ lightning_logs/
 # Models & Plots (from main branch)
 models/
 plots/
+
+# ==========================================
+# 📊 Machine Learning Pipeline Specific
+# ==========================================
+# Exclude cached datasets under ML directories
+/ml/*/data/*.csv
+
+# Exclude trained model weights & pickle files
+/ml/*/models/*.pkl
+/ml/*/models/*.txt
+
+# Exclude results directories
+/ml/*/results/
