@@ -47,3 +47,6 @@ plots/
 
 # Exclude results directories
 /ml/*/results/
+
+# Exclude simulator data folder containing temporary customer profiles and histories
+/llm/consult_assist/data/
