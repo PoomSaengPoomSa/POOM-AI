@@ -1,7 +1,7 @@
 annotated-types==0.7.0
 anyio==4.13.0
 catboost==1.2.10
-certifi==2026.5.20
+certifi==2026.5.25
 cffi==2.0.0
 charset-normalizer==3.4.7
 cloudpickle==3.1.2
@@ -77,3 +77,6 @@ xgboost==3.2.0
 xmltodict==1.0.4
 xxhash==3.7.0
 zstandard==0.25.0
+numpy
+mlflow
+boto3==1.43.15
