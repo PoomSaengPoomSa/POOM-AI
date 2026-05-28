@@ -30,13 +30,22 @@ class ConsultationReport(BaseModel):
         description="상담 전체의 핵심 맥락과 결론을 요약한 친절한 1문장 내외의 요약문"
     )
 
-def get_prompt_template() -> str:
-    """prompt/memo_report_prompt.md 파일의 내용을 읽어옵니다."""
-    prompt_path = os.path.join(current_dir, "prompt", "memo_report_prompt.md")
+def get_consult_system_prompt() -> str:
+    """prompt/consult_system_prompt.md 파일의 내용을 읽어옵니다."""
+    prompt_path = os.path.join(current_dir, "prompt", "consult_system_prompt.md")
     if not os.path.exists(prompt_path):
-        raise FileNotFoundError(f"프롬프트 파일을 찾을 수 없습니다: {prompt_path}")
+        raise FileNotFoundError(f"시스템 프롬프트 파일을 찾을 수 없습니다: {prompt_path}")
     with open(prompt_path, "r", encoding="utf-8") as f:
         return f.read()
+
+def get_consult_user_prompt(memo_text: str) -> str:
+    """prompt/consult_user_prompt.md 파일의 내용을 읽고 변수를 주입합니다."""
+    prompt_path = os.path.join(current_dir, "prompt", "consult_user_prompt.md")
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError(f"사용자 프롬프트 파일을 찾을 수 없습니다: {prompt_path}")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        template = f.read()
+    return template.replace("{memo_text}", memo_text)
 
 def structure_consultation_memo(memo_text: str) -> ConsultationReport:
     """
@@ -49,15 +58,16 @@ def structure_consultation_memo(memo_text: str) -> ConsultationReport:
     # OpenAI 클라이언트 초기화
     client = OpenAI(api_key=api_key)
     
-    # 시스템 프롬프트 로드
-    system_prompt = get_prompt_template()
+    # 시스템 및 사용자 프롬프트 로드
+    system_prompt = get_consult_system_prompt()
+    user_prompt = get_consult_user_prompt(memo_text)
     
     # GPT-4o-mini 모델을 사용하여 구조화된 출력(Structured Outputs) 획득
     completion = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"상담 메모:\n{memo_text}"}
+            {"role": "user", "content": user_prompt}
         ],
         response_format=ConsultationReport,
         temperature=0.1,  # 사실성 보장 및 일관성을 위해 낮은 온도로 설정
