@@ -27,6 +27,13 @@ from graph.graph_builder import build_todo_agent
 from tools.db_helper import get_db_session
 from app.models.account import PbUser
 
+# 방문 예정 브리핑 및 알림 생성 파이프라인 연계
+llm_brief_path = os.path.abspath(os.path.join(current_dir, "..", "..", "llm", "visit_brief"))
+if llm_brief_path not in sys.path:
+    sys.path.insert(0, llm_brief_path)
+from visit_brief_generator import run_notification_generator
+
+
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
@@ -107,6 +114,14 @@ def run_agent_for_pb(u_id: str, date_str: str):
             for s in saved_info:
                 logger.info(f"  {s}")
             logger.info("==================================================================")
+
+        # [AI 알림 및 방문 브리핑 실시간 적재 연계]
+        try:
+            logger.info("[PIPELINE] AI 알림 및 방문 예정 브리핑 생성 파이프라인 가동...")
+            run_notification_generator(u_id, date_str)
+            logger.info("[PIPELINE] AI 알림 및 방문 예정 브리핑 생성 파이프라인 성공 완료!")
+        except Exception as ne:
+            logger.error(f"[PIPELINE_ERROR] 알림 파이프라인 생성 실패: {ne}", exc_info=True)
             
     except Exception as e:
         logger.error(f"[ERROR] 에이전트 구동 실패: {str(e)}", exc_info=True)
