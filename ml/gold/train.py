@@ -12,6 +12,8 @@ from model import GoldModel
 import warnings
  
 warnings.filterwarnings('ignore')
+
+GENERATE_REPORT = False  # 테스트 중엔 False, 운영 시 True로 변경
  
 def load_data_from_mysql():
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -113,6 +115,155 @@ def save_prediction_to_mysql(prob_rise, prob_fall, run_id):
             connection.close()
     except Exception as e:
         print(f"[Error] Failed to save gold predictions to MySQL: {e}")
+
+
+def generate_and_save_gold_report(prob_rise, prob_fall, run_id):
+    if not GENERATE_REPORT:
+        print("[LLM] GENERATE_REPORT is set to False. Skipping LLM report generation for Gold.")
+        return
+        
+    load_dotenv(find_dotenv())
+    openai_key = os.getenv("OPENAI_API_KEY")
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not openai_key:
+        print("[Warning] Missing OPENAI_API_KEY. Skipping LLM report generation.")
+        return
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping LLM report generation.")
+        return
+        
+    # 1. Fetch latest actual gold price
+    latest_gold_val = None
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                sql = "SELECT value FROM economic_indicator_history WHERE type = 'gold' ORDER BY recorded_at DESC LIMIT 1"
+                cursor.execute(sql)
+                res = cursor.fetchone()
+                if res:
+                    latest_gold_val = float(res[0])
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Warning] Failed to fetch latest actual gold price for LLM: {e}")
+        
+    # 2. Call OpenAI API using standard urllib
+    import urllib.request
+    import json
+    
+    prob_rise_pct = prob_rise * 100
+    prob_fall_pct = prob_fall * 100
+    
+    prompt = f"""
+    금값 AI 예측 모델 분석 결과:
+    - 내일 상승 확률: {prob_rise_pct:.1f}%
+    - 내일 하락 확률: {prob_fall_pct:.1f}%
+    - 최신 금값 실제 가격: {f'{latest_gold_val:,.2f}' if latest_gold_val is not None else '데이터 없음'}
+    - 주요 SHAP 변수 기여도 순위: 달러 인덱스 (dxy_proxy, 32%), 소비자물가지수 (kr_cpi, 25%), 원/달러 환율 (kr_usd_exchange, 23%), WTI 유가 (wti_oil, 20%)
+    
+    위 예측 데이터와 변수 기여도를 바탕으로 전문적이고 가독성이 높은 한국어 금값 전망 분석 리포트를 markdown 형식으로 작성해주세요.
+    반드시 다음의 구조와 예시 이미지의 격식과 톤앤매너를 유지해주세요:
+    
+    구조 예시:
+    ### [금값 분석 리포트]
+    
+    (여기에 향후 단기/장기 전망에 대한 한 줄 요약을 적어주세요. 예: 향후 12개월간 금값은 ... 수준으로 ...이 예상됩니다.)
+    
+    **1. (첫 번째 핵심 요인 제목)**
+    (상승 혹은 하락을 이끄는 첫 번째 핵심 변수와 AI 분석 기여도를 엮어서 상세한 설명 한 단락을 작성해주세요.)
+    
+    **2. (두 번째 핵심 요인 제목)**
+    (상승 혹은 하락을 이끄는 두 번째 핵심 변수와 AI 분석 기여도를 엮어서 상세한 설명 한 단락을 작성해주세요.)
+    
+    요구사항:
+    - 마크다운 형식으로 작성할 것.
+    - 너무 길지 않게 핵심 요약 위주로 작성할 것 (전체 400자 내외).
+    """
+    
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {openai_key}"
+    }
+    data = {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "system", "content": "You are a professional economic analyst. Always respond in Korean markdown format. Keep it concise, engaging, and professional."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7
+    }
+    
+    content = None
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode("utf-8"),
+            headers=headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            content = res_data["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"[Error] Failed to generate LLM report via OpenAI: {e}")
+        return
+        
+    if not content:
+        print("[Warning] Generated LLM report is empty.")
+        return
+        
+    # 3. Save to trend_llm_report table (Cumulative Insert)
+    import uuid
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trend_llm_report (
+                    report_id VARCHAR(50) NOT NULL PRIMARY KEY,
+                    type VARCHAR(50) NOT NULL,
+                    model_name VARCHAR(50) NOT NULL,
+                    language VARCHAR(10) NOT NULL,
+                    content TEXT NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    data_source VARCHAR(255)
+                )
+                """)
+                
+                report_id = f"rpt_{str(uuid.uuid4())[:8]}"
+                sql = """
+                INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, data_source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """
+                cursor.execute(sql, (report_id, "gold", "gpt-4o", "ko", content, "done", "FRED, ECOS"))
+            connection.commit()
+            print("[DB] Successfully generated and saved Gold LLM report into MySQL trend_llm_report table.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save Gold LLM report to MySQL: {e}")
 
 
 def save_performance_to_mysql(precision, f1_score, accuracy, recall, run_id=None):
@@ -280,6 +431,7 @@ def train_model():
 
         save_performance_to_mysql(precision, f1, accuracy, recall, run_id=run_id_val)
         save_prediction_to_mysql(prob_rise=prob_rise, prob_fall=prob_fall, run_id=run_id_val)
+        generate_and_save_gold_report(prob_rise=prob_rise, prob_fall=prob_fall, run_id=run_id_val)
  
         # 5. Save Models
         joblib.dump(classifier, os.path.join(models_dir, 'gold_xgb_classifier.pkl'))
