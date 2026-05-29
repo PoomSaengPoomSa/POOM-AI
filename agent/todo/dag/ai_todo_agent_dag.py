@@ -40,7 +40,7 @@ with DAG(
     run_ai_todo_agent = BashOperator(
         task_id="run_ai_todo_agent",
         bash_command="""
-        python3 /opt/airflow/POOM-AI/agent/todo/main.py --u_id user1 --date {{ ds }}
+        python3 /opt/airflow/POOM-AI/agent/todo/main.py --u_id user1 --date {{ logical_date.in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}
         """,
         # 윈도우 로컬 환경에서 테스트할 경우 아래의 윈도우 절대 경로로 치환하여 사용합니다:
         # bash_command="c:\\ITStudy\\poom\\back\\.venv\\Scripts\\python.exe c:\\ITStudy\\poom\\ai\\agent\\todo\\main.py --u_id user1 --date {{ ds }}"
