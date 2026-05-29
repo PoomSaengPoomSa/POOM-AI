@@ -3,10 +3,56 @@ import pickle
 import mlflow
 import mlflow.sklearn
 import numpy as np
+import pymysql
 from dotenv import load_dotenv, find_dotenv
 from utils.preprocess import preprocess_data
 from model import RealEstateEnsembleRegressor
- 
+
+
+def save_performance_to_mysql(rmse, r2_score, mae, mse, run_id=None):
+    import uuid
+    if not run_id:
+        try:
+            active_run = mlflow.active_run()
+            run_id = active_run.info.run_id if active_run else uuid.uuid4().hex[:32]
+        except Exception:
+            run_id = uuid.uuid4().hex[:32]
+            
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping performance save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                sql = """
+                INSERT INTO realestate_performance (run_id, rmse, r2_score, mae, mse)
+                VALUES (%s, %s, %s, %s, %s)
+                """
+                cursor.execute(sql, (run_id, rmse, r2_score, mae, mse))
+            connection.commit()
+            print("[DB] Successfully saved real_estate performance metrics into MySQL.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save performance metrics to MySQL: {e}")
+
+
 def run_train():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,7 +86,7 @@ def run_train():
         # TimeSeriesSplit Cross-Validation (5 Splits)
         # -----------------------------------------
         from sklearn.model_selection import TimeSeriesSplit
-        from sklearn.metrics import r2_score, mean_absolute_error
+        from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
         from sklearn.linear_model import LinearRegression
  
         print("\n" + "=" * 55)
@@ -48,8 +94,9 @@ def run_train():
         print("=" * 55)
  
         tscv = TimeSeriesSplit(n_splits=5)
-        cv_r2_scores = []
-        cv_mae_scores = []
+        cv_metrics = {
+            "rmse": [], "r2": [], "mae": [], "mse": []
+        }
  
         for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_sc)):
             X_tr, X_val = X_train_sc[train_idx], X_train_sc[val_idx]
@@ -60,25 +107,29 @@ def run_train():
  
             fold_r2 = r2_score(y_val, fold_pred)
             fold_mae = mean_absolute_error(y_val, fold_pred)
+            fold_mse = mean_squared_error(y_val, fold_pred)
+            fold_rmse = np.sqrt(fold_mse)
  
-            cv_r2_scores.append(fold_r2)
-            cv_mae_scores.append(fold_mae)
+            cv_metrics["r2"].append(fold_r2)
+            cv_metrics["mae"].append(fold_mae)
+            cv_metrics["mse"].append(fold_mse)
+            cv_metrics["rmse"].append(fold_rmse)
  
             # MLflow - 폴드별 성능 기록
             mlflow.log_metric(f"fold_{fold+1}_r2", fold_r2)
             mlflow.log_metric(f"fold_{fold+1}_mae", fold_mae)
+            mlflow.log_metric(f"fold_{fold+1}_mse", fold_mse)
+            mlflow.log_metric(f"fold_{fold+1}_rmse", fold_rmse)
  
-            print(f"    * Fold {fold+1} | Train: {len(X_tr)} months, Val: {len(X_val)} months | Val R2: {fold_r2:.4f} | Val MAE: {fold_mae:.4f}%")
+            print(f"    * Fold {fold+1} | Train: {len(X_tr)} months, Val: {len(X_val)} months | Val R2: {fold_r2:.4f} | Val MAE: {fold_mae:.4f}% | Val MSE: {fold_mse:.6f} | Val RMSE: {fold_rmse:.4f}")
  
-        mean_r2  = np.mean(cv_r2_scores)
-        mean_mae = np.mean(cv_mae_scores)
-        print(f"  --> Mean CV R2  : {mean_r2:.4f}")
-        print(f"  --> Mean CV MAE : {mean_mae:.4f}%")
+        print("-" * 55)
+        print("  --> Mean CV Metrics:")
+        for k in cv_metrics.keys():
+            mean_val = np.mean(cv_metrics[k])
+            mlflow.log_metric(f"cv_mean_{k}", mean_val)
+            print(f"      * {k:<10}: {mean_val:.4f}")
         print("=" * 55 + "\n")
- 
-        # MLflow - CV 평균 성능 기록
-        mlflow.log_metric("cv_mean_r2", mean_r2)
-        mlflow.log_metric("cv_mean_mae", mean_mae)
  
         # Train final ensemble model
         ensemble = RealEstateEnsembleRegressor(random_state=42)
@@ -88,8 +139,16 @@ def run_train():
         final_pred = ensemble.predict(X_train_sc)
         final_r2  = r2_score(y_train, final_pred)
         final_mae = mean_absolute_error(y_train, final_pred)
+        final_mse = mean_squared_error(y_train, final_pred)
+        final_rmse = np.sqrt(final_mse)
+        
         mlflow.log_metric("train_r2", final_r2)
         mlflow.log_metric("train_mae", final_mae)
+        mlflow.log_metric("train_mse", final_mse)
+        mlflow.log_metric("train_rmse", final_rmse)
+
+        # MySQL DB에 성능 지표 추가 적재 (하드코딩 없음)
+        save_performance_to_mysql(final_rmse, final_r2, final_mae, final_mse)
  
         # Setup directories and save
         models_dir = os.path.join(base_dir, 'models')
