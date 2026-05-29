@@ -168,7 +168,7 @@ def get_recent_consultation_report(customer_id: int):
     Get the latest consultation_report content for the customer.
     """
     query = """
-        SELECT r.cr_id, r.content, m.consult_date, m.u_id
+        SELECT r.cr_id, r.key_contents, r.special_notes, r.follow_up_actions, r.summary, m.consult_date, m.u_id
         FROM consultation_report r
         JOIN consultation_memo m ON r.cm_id = m.cm_id
         WHERE m.c_id = %s
@@ -178,6 +178,18 @@ def get_recent_consultation_report(customer_id: int):
     with get_db_cursor() as cursor:
         cursor.execute(query, (customer_id,))
         result = cursor.fetchone()
+        if result:
+            content_parts = []
+            if result.get("key_contents"):
+                content_parts.append(f"[핵심 상담 내용]\n{result['key_contents']}")
+            if result.get("special_notes"):
+                content_parts.append(f"[특이사항 및 추가 상담 계획]\n{result['special_notes']}")
+            if result.get("follow_up_actions"):
+                content_parts.append(f"[향후 조치 사항]\n{result['follow_up_actions']}")
+            if result.get("summary"):
+                content_parts.append(f"[요약]\n{result['summary']}")
+            
+            result["content"] = "\n\n".join(content_parts)
         return result
 
 def save_customer_feature(customer_id: int, category: str, contents: str):
