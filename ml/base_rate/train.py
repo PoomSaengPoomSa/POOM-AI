@@ -51,8 +51,99 @@ def load_data_from_mysql():
         if col not in ['date_ym', 'label']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
- 
- 
+
+
+def save_prediction_to_mysql(prob_hike, prob_freeze, prob_cut, run_id):
+    import pymysql
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping prediction save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS baserate_predictions (
+                    run_id VARCHAR(50) NOT NULL,
+                    prob_hike DOUBLE NOT NULL,
+                    prob_freeze DOUBLE NOT NULL,
+                    prob_cut DOUBLE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                
+                sql = """
+                INSERT INTO baserate_predictions (run_id, prob_hike, prob_freeze, prob_cut)
+                VALUES (%s, %s, %s, %s)
+                """
+                cursor.execute(sql, (run_id, prob_hike, prob_freeze, prob_cut))
+            connection.commit()
+            print("[DB] Successfully saved baserate_predictions (1 row) into MySQL.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save baserate predictions to MySQL: {e}")
+
+
+def save_performance_to_mysql(precision, f1_score, accuracy, recall, run_id=None):
+    import uuid
+    if not run_id:
+        try:
+            active_run = mlflow.active_run()
+            run_id = active_run.info.run_id if active_run else uuid.uuid4().hex[:32]
+        except Exception:
+            run_id = uuid.uuid4().hex[:32]
+            
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping performance save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                sql = """
+                INSERT INTO baserate_performance (run_id, accuracy, `precision`, recall, f1_score)
+                VALUES (%s, %s, %s, %s, %s)
+                """
+                cursor.execute(sql, (run_id, accuracy, precision, recall, f1_score))
+            connection.commit()
+            print("[DB] Successfully saved base_rate performance metrics into MySQL.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save performance metrics to MySQL: {e}")
+
+
 def train_model():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     load_dotenv(find_dotenv())
@@ -119,7 +210,7 @@ def train_model():
         builder = InterestRateEnsembleModel(random_state=42)
  
         from sklearn.utils.class_weight import compute_sample_weight
-        from sklearn.metrics import accuracy_score, f1_score
+        from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
  
         # MLflow - 하이퍼파라미터 기록
         sample_weight_map = {0: 5.0, 1: 1.0, 2: 5.0}
@@ -137,12 +228,35 @@ def train_model():
         y_pred = classifier.predict(X_test)
         accuracy = accuracy_score(y_test_label, y_pred)
         f1 = f1_score(y_test_label, y_pred, average='weighted')
+        precision = precision_score(y_test_label, y_pred, average='weighted', zero_division=0)
+        recall = recall_score(y_test_label, y_pred, average='weighted', zero_division=0)
  
         mlflow.log_metric("accuracy", accuracy)
-        mlflow.log_metric("f1_score_weighted", f1)
+        mlflow.log_metric("f1", f1)
+        mlflow.log_metric("precision", precision)
+        mlflow.log_metric("recall", recall)
         print(f"\n   [Test 성능]")
-        print(f"     Accuracy : {accuracy:.4f}")
-        print(f"     F1 Score : {f1:.4f}")
+        print(f"     Accuracy  : {accuracy:.4f}")
+        print(f"     F1 Score  : {f1:.4f}")
+        print(f"     Precision : {precision:.4f}")
+        print(f"     Recall    : {recall:.4f}")
+
+        # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
+        X_latest = df.drop(columns=drop_cols).iloc[[-1]]
+        latest_proba = classifier.predict_proba(X_latest)[0]
+        prob_cut = float(latest_proba[0])
+        prob_freeze = float(latest_proba[1])
+        prob_hike = float(latest_proba[2])
+        
+        import uuid
+        try:
+            active_run = mlflow.active_run()
+            run_id_val = active_run.info.run_id if active_run else uuid.uuid4().hex[:32]
+        except Exception:
+            run_id_val = uuid.uuid4().hex[:32]
+
+        save_performance_to_mysql(precision, f1, accuracy, recall, run_id=run_id_val)
+        save_prediction_to_mysql(prob_hike=prob_hike, prob_freeze=prob_freeze, prob_cut=prob_cut, run_id=run_id_val)
  
         # -----------------------------------------
         # 3. Save Models

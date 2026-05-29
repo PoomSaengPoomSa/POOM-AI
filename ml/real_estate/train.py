@@ -9,6 +9,51 @@ from utils.preprocess import preprocess_data
 from model import RealEstateEnsembleRegressor
 
 
+def save_prediction_to_mysql(predicted_value, run_id):
+    import pymysql
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping prediction save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS realestate_predictions (
+                    run_id VARCHAR(50) NOT NULL,
+                    predicted_value DOUBLE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                
+                sql = """
+                INSERT INTO realestate_predictions (run_id, predicted_value)
+                VALUES (%s, %s)
+                """
+                cursor.execute(sql, (run_id, predicted_value))
+            connection.commit()
+            print("[DB] Successfully saved realestate_predictions (1 row) into MySQL.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save realestate predictions to MySQL: {e}")
+
+
 def save_performance_to_mysql(rmse, r2_score, mae, mse, run_id=None):
     import uuid
     if not run_id:
@@ -147,8 +192,18 @@ def run_train():
         mlflow.log_metric("train_mse", final_mse)
         mlflow.log_metric("train_rmse", final_rmse)
 
-        # MySQL DB에 성능 지표 추가 적재 (하드코딩 없음)
-        save_performance_to_mysql(final_rmse, final_r2, final_mae, final_mse)
+        # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
+        latest_predicted_value = float(ensemble.predict(X_train_sc[[-1]])[0])
+        
+        import uuid
+        try:
+            active_run = mlflow.active_run()
+            run_id_val = active_run.info.run_id if active_run else uuid.uuid4().hex[:32]
+        except Exception:
+            run_id_val = uuid.uuid4().hex[:32]
+
+        save_performance_to_mysql(final_rmse, final_r2, final_mae, final_mse, run_id=run_id_val)
+        save_prediction_to_mysql(predicted_value=latest_predicted_value, run_id=run_id_val)
  
         # Setup directories and save
         models_dir = os.path.join(base_dir, 'models')

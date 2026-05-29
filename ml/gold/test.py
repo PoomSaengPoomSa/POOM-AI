@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import pymysql
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -151,48 +151,35 @@ def test_model():
     test_result.to_csv(save_path, index=False, encoding='utf-8-sig')
     print(f"   Saved test prediction results to: {save_path}")
 
-    # Calculate exhaustive metrics
-    tr_f1_macro = f1_score(y_all[train_mask], preds[train_mask], average='macro', zero_division=0)
-    te_f1_macro = f1_score(y_all[test_mask], preds[test_mask], average='macro', zero_division=0)
-    tr_f1_weighted = f1_score(y_all[train_mask], preds[train_mask], average='weighted', zero_division=0)
-    te_f1_weighted = f1_score(y_all[test_mask], preds[test_mask], average='weighted', zero_division=0)
+    # Calculate standard metrics
+    tr_f1 = f1_score(y_all[train_mask], preds[train_mask], average='weighted', zero_division=0)
+    te_f1 = f1_score(y_all[test_mask], preds[test_mask], average='weighted', zero_division=0)
 
-    tr_prec_macro = precision_score(y_all[train_mask], preds[train_mask], average='macro', zero_division=0)
-    te_prec_macro = precision_score(y_all[test_mask], preds[test_mask], average='macro', zero_division=0)
-    tr_rec_macro = recall_score(y_all[train_mask], preds[train_mask], average='macro', zero_division=0)
-    te_rec_macro = recall_score(y_all[test_mask], preds[test_mask], average='macro', zero_division=0)
-
-    try:
-        tr_auc = roc_auc_score(y_all[train_mask], proba[train_mask, 1])
-        te_auc = roc_auc_score(y_all[test_mask], proba[test_mask, 1])
-    except Exception:
-        tr_auc = np.nan
-        te_auc = np.nan
+    tr_prec = precision_score(y_all[train_mask], preds[train_mask], average='weighted', zero_division=0)
+    te_prec = precision_score(y_all[test_mask], preds[test_mask], average='weighted', zero_division=0)
+    tr_rec = recall_score(y_all[train_mask], preds[train_mask], average='weighted', zero_division=0)
+    te_rec = recall_score(y_all[test_mask], preds[test_mask], average='weighted', zero_division=0)
 
     metrics = pd.DataFrame([
         {
             '구분': 'Train',
-            'Accuracy(%)': round(tr_acc*100, 2),
-            'F1_Macro': round(tr_f1_macro, 4),
-            'F1_Weighted': round(tr_f1_weighted, 4),
-            'Precision_Macro': round(tr_prec_macro, 4),
-            'Recall_Macro': round(tr_rec_macro, 4),
-            'AUC_ROC': round(tr_auc, 4) if not np.isnan(tr_auc) else 'N/A'
+            'accuracy': round(tr_acc, 4),
+            'precision': round(tr_prec, 4),
+            'f1': round(tr_f1, 4),
+            'recall': round(tr_rec, 4)
         },
         {
             '구분': 'Test',
-            'Accuracy(%)': round(te_acc*100, 2),
-            'F1_Macro': round(te_f1_macro, 4),
-            'F1_Weighted': round(te_f1_weighted, 4),
-            'Precision_Macro': round(te_prec_macro, 4),
-            'Recall_Macro': round(te_rec_macro, 4),
-            'AUC_ROC': round(te_auc, 4) if not np.isnan(te_auc) else 'N/A'
+            'accuracy': round(te_acc, 4),
+            'precision': round(te_prec, 4),
+            'f1': round(te_f1, 4),
+            'recall': round(te_rec, 4)
         }
     ])
     
     metrics_path = os.path.join(results_dir, 'test_metrics.csv')
     metrics.to_csv(metrics_path, index=False, encoding='utf-8-sig')
-    print(f"   Saved exhaustive metrics to: {metrics_path}")
+    print(f"   Saved standard metrics to: {metrics_path}")
 
     # 5. Generate Premium Dashboard Visualizations
     print("[TEST] Plotting premium evaluation dashboard...")
@@ -249,8 +236,9 @@ def test_model():
         ('', ''),
         ('상승(1) F1-Score', f"{report['1']['f1-score']:.4f}"),
         ('하락(0) F1-Score', f"{report['0']['f1-score']:.4f}"),
-        ('Macro F1-Score', f"{te_f1_macro:.4f}"),
-        ('Test AUC-ROC 스코어', f"{te_auc:.4f}" if not np.isnan(te_auc) else 'N/A'),
+        ('가중 F1-Score', f"{te_f1:.4f}"),
+        ('가중 Precision', f"{te_prec:.4f}"),
+        ('가중 Recall', f"{te_rec:.4f}"),
         ('', ''),
         ('정답 개수', f"{correct_count} / {total_count} 거래일"),
     ]
