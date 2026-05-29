@@ -26,8 +26,8 @@ if back_path not in sys.path:
     sys.path.insert(0, back_path)
 
 # Pydantic Settings ValidationError 방어
-env_path = os.path.join(back_path, ".env")
-env_backup_path = os.path.join(back_path, ".env.backup")
+env_path = os.path.abspath(os.path.join(back_path, "..", ".env"))
+env_backup_path = os.path.abspath(os.path.join(back_path, "..", ".env.backup"))
 has_env = os.path.exists(env_path)
 
 if has_env:
@@ -87,8 +87,8 @@ def get_db():
         db.close()
 
 # .env 환경변수 원본 로드 (OpenAI 호출용)
-from dotenv import load_dotenv
-load_dotenv(env_path)
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 def generate_briefing_via_llm(customer_info: dict) -> str:
     """

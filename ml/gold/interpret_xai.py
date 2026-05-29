@@ -12,8 +12,7 @@ except ImportError:
 def interpret_xai():
     # 1. Environment & Path Setup
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    env_path = os.path.abspath(os.path.join(base_dir, '../../.env'))
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(find_dotenv())
     
     api_key = os.getenv("OPENAI_API_KEY")
     results_dir = os.path.join(base_dir, 'results')

@@ -5,7 +5,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 def run_script(script_name):
     print(f"\n{'='*60}")
@@ -46,12 +46,12 @@ def run_script(script_name):
 def main():
     # Load .env at the orchestrator level
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    env_path = os.path.abspath(os.path.join(base_dir, '../../.env'))
-    if os.path.exists(env_path):
-        load_dotenv(dotenv_path=env_path)
-        print(f"[ENV] Loaded environment variables from: {env_path}")
+    found_env = find_dotenv()
+    if found_env:
+        load_dotenv(dotenv_path=found_env)
+        print(f"[ENV] Loaded environment variables from: {found_env}")
     else:
-        print(f"[ENV] Warning: .env file not found at: {env_path}")
+        print(f"[ENV] Warning: .env file not found via find_dotenv()")
 
     pipeline_scripts = [
         'utils/get_data.py',

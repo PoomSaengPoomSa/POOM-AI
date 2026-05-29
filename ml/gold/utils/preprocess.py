@@ -9,8 +9,8 @@ def load_raw_data_from_mysql():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     csv_path = os.path.join(base_dir, 'data', 'raw_data.csv')
     
-    env_path = os.path.abspath(os.path.join(base_dir, '../../.env'))
-    load_dotenv(dotenv_path=env_path)
+    from dotenv import find_dotenv
+    load_dotenv(find_dotenv())
     
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')
@@ -191,8 +191,8 @@ def preprocess():
     df[numeric_cols] = df[numeric_cols].round(6)
 
     # DB connection credentials
-    env_path = os.path.abspath(os.path.join(base_dir, '../../.env'))
-    load_dotenv(dotenv_path=env_path)
+    from dotenv import find_dotenv
+    load_dotenv(find_dotenv())
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')
     DB_HOST = os.getenv('DB_HOST')

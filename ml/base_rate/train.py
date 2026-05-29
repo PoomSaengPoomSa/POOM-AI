@@ -5,7 +5,7 @@ import joblib
 import pymysql
 import mlflow
 import mlflow.sklearn
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from model import InterestRateEnsembleModel
 import warnings
  
@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
  
 def load_data_from_mysql():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    load_dotenv(dotenv_path=os.path.abspath(os.path.join(base_dir, '../../../.env')))
+    load_dotenv(find_dotenv())
     
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')
@@ -55,7 +55,7 @@ def load_data_from_mysql():
  
 def train_model():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    load_dotenv(dotenv_path=os.path.abspath(os.path.join(base_dir, '../../../.env')))
+    load_dotenv(find_dotenv())
 
     # MLflow 설정
     mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI', None))

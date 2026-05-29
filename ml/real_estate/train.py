@@ -3,14 +3,14 @@ import pickle
 import mlflow
 import mlflow.sklearn
 import numpy as np
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from utils.preprocess import preprocess_data
 from model import RealEstateEnsembleRegressor
  
 def run_train():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    load_dotenv(dotenv_path=os.path.abspath(os.path.join(base_dir, '../../../.env')))
+    load_dotenv(find_dotenv())
  
     # MLflow 설정
     mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI', None))
