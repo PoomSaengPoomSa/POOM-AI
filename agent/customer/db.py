@@ -2,16 +2,10 @@ import os
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# Absolute path resolution to strictly load .env from agent/customer/.env
-current_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(current_dir, ".env")
-if os.path.exists(env_path):
-    load_dotenv(dotenv_path=env_path)
-else:
-    # Fallback to standard load if not found locally
-    load_dotenv()
+# 로컬 .env 또는 상위 폴더 탐색을 통한 통합 .env 로드
+load_dotenv(find_dotenv())
 
 # Strict Environment Variable Validation (No hardcoded fallback defaults in code)
 DB_HOST = os.getenv("DB_HOST")
@@ -31,7 +25,7 @@ if missing_vars:
     raise ValueError(
         f"Database configuration error: The following required environment variables "
         f"are missing from the .env file: {', '.join(missing_vars)}. "
-        f"Please verify your local .env file at {env_path}"
+        f"Please verify your local .env file at {find_dotenv()}"
     )
 
 DB_PORT = int(DB_PORT_STR)
