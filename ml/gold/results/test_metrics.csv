@@ -1,3 +1,3 @@
-﻿구분,Accuracy(%),F1_Macro,F1_Weighted,Precision_Macro,Recall_Macro,AUC_ROC
-Train,74.43,0.7439,0.7442,0.7444,0.7437,0.8284
-Test,56.06,0.5449,0.5576,0.5462,0.545,0.5657
+﻿구분,accuracy,precision,f1,recall
+Train,0.7443,0.7444,0.7442,0.7443
+Test,0.5606,0.556,0.5576,0.5606

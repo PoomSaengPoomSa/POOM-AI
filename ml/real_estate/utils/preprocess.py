@@ -197,6 +197,75 @@ def preprocess_data(test_months=24, vif_threshold=5.0):
     X_train_sc = scaler.fit_transform(X_train)
     X_test_sc = scaler.transform(X_test)
 
+    # -------------------------------------------------------------
+    # ml_realestate_preprocessed 테이블 동적 생성 및 업로드 추가
+    # -------------------------------------------------------------
+    import pymysql
+    
+    # numeric_cols 반올림
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].round(6)
+
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("   [Warning] Missing DB configuration in .env. Skipping database export.")
+    else:
+        DB_PORT = int(DB_PORT)
+        try:
+            connection = pymysql.connect(
+                host=DB_HOST,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME,
+                port=DB_PORT,
+                charset='utf8mb4',
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            print("   [RealEstate] DB Connection successful!")
+            
+            with connection.cursor() as cursor:
+                table_name = "ml_realestate_preprocessed"
+                
+                # Drop existing table
+                cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+                
+                # Dynamic CREATE TABLE based on df columns
+                columns_def = []
+                final_order = []
+                for col in df.columns:
+                    final_order.append(col)
+                    if col == 'date_ym':
+                        columns_def.append("date_ym VARCHAR(10) PRIMARY KEY")
+                    else:
+                        columns_def.append(f"`{col}` DOUBLE")
+                
+                create_table_sql = f"CREATE TABLE {table_name} ({', '.join(columns_def)}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+                cursor.execute(create_table_sql)
+                print(f"   Created dynamic table '{table_name}' with {len(df.columns)} columns.")
+
+                # Batch INSERT preprocessed DataFrame rows (NaN to None for NULL binding)
+                df_ordered = df[final_order]
+                db_data = df_ordered.replace({np.nan: None}).values.tolist()
+                
+                placeholders = ", ".join(["%s"] * len(final_order))
+                col_names_quoted = ", ".join([f"`{c}`" for c in final_order])
+                
+                insert_sql = f"INSERT INTO {table_name} ({col_names_quoted}) VALUES ({placeholders})"
+                
+                cursor.executemany(insert_sql, db_data)
+                connection.commit()
+                print(f"   Successfully uploaded {len(db_data)} preprocessed rows into MySQL table '{table_name}'!")
+                
+            connection.close()
+        except Exception as e:
+            print(f"   [Error] MySQL Export failed: {e}")
+
     preprocessed_data = {
         'df': df,
         'train_df': train_df,
