@@ -8,6 +8,7 @@ from dotenv import load_dotenv, find_dotenv
 from utils.preprocess import preprocess_data
 from model import RealEstateEnsembleRegressor
 
+
 GENERATE_REPORT = False  # 테스트 중엔 False, 운영 시 True로 변경
 
 
@@ -39,7 +40,7 @@ def save_prediction_to_mysql(predicted_value, predicted_index, run_id):
                 CREATE TABLE IF NOT EXISTS realestate_predictions (
                     run_id VARCHAR(50) NOT NULL,
                     predicted_value DOUBLE NOT NULL,
-                    predicted_index FLOAT,
+                    predicted_index DOUBLE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
@@ -77,7 +78,7 @@ def generate_and_save_realestate_report(predicted_value, predicted_index, run_id
         print("[Warning] Missing DB config. Skipping LLM report generation.")
         return
         
-    # 1. Fetch latest actual index
+    # 1. Fetch latest actual realestate index
     re_today = None
     try:
         connection = pymysql.connect(
@@ -100,7 +101,7 @@ def generate_and_save_realestate_report(predicted_value, predicted_index, run_id
     except Exception as e:
         print(f"[Warning] Failed to fetch latest actual index for LLM: {e}")
         
-    # 2. Call OpenAI API
+    # 2. Call OpenAI API using standard urllib
     import urllib.request
     import json
     
@@ -163,7 +164,7 @@ def generate_and_save_realestate_report(predicted_value, predicted_index, run_id
         print("[Warning] Generated LLM report is empty.")
         return
         
-    # 3. Save to trend_llm_report table (Cumulative Insert)
+    # 3. Save to trend_llm_report table (Cumulative Insert with 16-character UUID)
     import uuid
     try:
         connection = pymysql.connect(
@@ -189,7 +190,7 @@ def generate_and_save_realestate_report(predicted_value, predicted_index, run_id
                 )
                 """)
                 
-                report_id = f"rpt_{str(uuid.uuid4())[:8]}"
+                report_id = f"rpt_{str(uuid.uuid4()).replace('-', '')[:16]}"
                 sql = """
                 INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, data_source)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -234,6 +235,18 @@ def save_performance_to_mysql(rmse, r2_score, mae, mse, run_id=None):
         )
         try:
             with connection.cursor() as cursor:
+                # evaluated_at 자동 생성 기둥 보장
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS realestate_performance (
+                    run_id VARCHAR(50) NOT NULL PRIMARY KEY,
+                    rmse DOUBLE NOT NULL,
+                    r2_score DOUBLE NOT NULL,
+                    mae DOUBLE NOT NULL,
+                    mse DOUBLE NOT NULL,
+                    evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                
                 sql = """
                 INSERT INTO realestate_performance (run_id, rmse, r2_score, mae, mse)
                 VALUES (%s, %s, %s, %s, %s)
@@ -280,8 +293,8 @@ def get_latest_actual_realestate_index():
     except Exception as e:
         print(f"[Error] Failed to fetch latest actual realestate index: {e}")
     return None
- 
- 
+
+
 def run_train():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -354,6 +367,11 @@ def run_train():
  
         print("-" * 55)
         print("  --> Mean CV Metrics:")
+        mean_rmse = float(np.mean(cv_metrics["rmse"]))
+        mean_r2 = float(np.mean(cv_metrics["r2"]))
+        mean_mae = float(np.mean(cv_metrics["mae"]))
+        mean_mse = float(np.mean(cv_metrics["mse"]))
+
         for k in cv_metrics.keys():
             mean_val = np.mean(cv_metrics[k])
             mlflow.log_metric(f"cv_mean_{k}", mean_val)
@@ -395,7 +413,8 @@ def run_train():
         except Exception:
             run_id_val = uuid.uuid4().hex[:32]
 
-        save_performance_to_mysql(final_rmse, final_r2, final_mae, final_mse, run_id=run_id_val)
+        # 교차 검증 평균 성능(Mean CV Metrics)을 DB에 저장하여 신뢰할 수 있는 일반화 성능 지표를 표기
+        save_performance_to_mysql(rmse=mean_rmse, r2_score=mean_r2, mae=mean_mae, mse=mean_mse, run_id=run_id_val)
         save_prediction_to_mysql(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
         generate_and_save_realestate_report(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
  

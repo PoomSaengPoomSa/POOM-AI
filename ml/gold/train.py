@@ -12,8 +12,9 @@ from model import GoldModel
 import warnings
  
 warnings.filterwarnings('ignore')
-
+ 
 GENERATE_REPORT = False  # 테스트 중엔 False, 운영 시 True로 변경
+
  
 def load_data_from_mysql():
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -226,7 +227,7 @@ def generate_and_save_gold_report(prob_rise, prob_fall, run_id):
         print("[Warning] Generated LLM report is empty.")
         return
         
-    # 3. Save to trend_llm_report table (Cumulative Insert)
+    # 3. Save to trend_llm_report table (Cumulative Insert with 16-character UUID)
     import uuid
     try:
         connection = pymysql.connect(
@@ -252,7 +253,7 @@ def generate_and_save_gold_report(prob_rise, prob_fall, run_id):
                 )
                 """)
                 
-                report_id = f"rpt_{str(uuid.uuid4())[:8]}"
+                report_id = f"rpt_{str(uuid.uuid4()).replace('-', '')[:16]}"
                 sql = """
                 INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, data_source)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -266,7 +267,7 @@ def generate_and_save_gold_report(prob_rise, prob_fall, run_id):
         print(f"[Error] Failed to save Gold LLM report to MySQL: {e}")
 
 
-def save_performance_to_mysql(precision, f1_score, accuracy, recall, run_id=None):
+def save_performance_to_mysql(accuracy, precision, recall, f1_score, run_id=None):
     import uuid
     if not run_id:
         try:
@@ -297,6 +298,18 @@ def save_performance_to_mysql(precision, f1_score, accuracy, recall, run_id=None
         )
         try:
             with connection.cursor() as cursor:
+                # 백엔드의 조회 쿼리에 매칭되는 테이블 구조 보장 (accuracy, precision, recall, f1_score)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS gold_performance (
+                    run_id VARCHAR(50) NOT NULL PRIMARY KEY,
+                    accuracy DOUBLE NOT NULL,
+                    `precision` DOUBLE NOT NULL,
+                    recall DOUBLE NOT NULL,
+                    f1_score DOUBLE NOT NULL,
+                    evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                
                 sql = """
                 INSERT INTO gold_performance (run_id, accuracy, `precision`, recall, f1_score)
                 VALUES (%s, %s, %s, %s, %s)
@@ -429,7 +442,8 @@ def train_model():
         except Exception:
             run_id_val = uuid.uuid4().hex[:32]
 
-        save_performance_to_mysql(precision, f1, accuracy, recall, run_id=run_id_val)
+        # 꼬임 버그를 완벽하게 제거하기 위해 명시적 키워드 인자로 호출
+        save_performance_to_mysql(accuracy=accuracy, precision=precision, recall=recall, f1_score=f1, run_id=run_id_val)
         save_prediction_to_mysql(prob_rise=prob_rise, prob_fall=prob_fall, run_id=run_id_val)
         generate_and_save_gold_report(prob_rise=prob_rise, prob_fall=prob_fall, run_id=run_id_val)
  
