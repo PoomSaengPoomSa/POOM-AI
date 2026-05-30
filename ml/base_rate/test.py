@@ -121,29 +121,59 @@ def test_model():
     test_result.to_csv(save_path, index=False, encoding='utf-8-sig')
     total = len(test_result)
     correct = test_result['match'].sum()
-    # Calculate standard metrics
-    tr_f1 = f1_score(y_label[train_mask], cls_preds[train_mask], average='weighted', zero_division=0)
-    te_f1 = f1_score(y_label[test_mask], cls_preds[test_mask], average='weighted', zero_division=0)
+    tr_f1_macro = f1_score(y_label[train_mask], cls_preds[train_mask], average='macro', zero_division=0)
+    te_f1_macro = f1_score(y_label[test_mask], cls_preds[test_mask], average='macro', zero_division=0)
+    tr_f1_weighted = f1_score(y_label[train_mask], cls_preds[train_mask], average='weighted', zero_division=0)
+    te_f1_weighted = f1_score(y_label[test_mask], cls_preds[test_mask], average='weighted', zero_division=0)
 
-    tr_prec = precision_score(y_label[train_mask], cls_preds[train_mask], average='weighted', zero_division=0)
-    te_prec = precision_score(y_label[test_mask], cls_preds[test_mask], average='weighted', zero_division=0)
-    tr_rec = recall_score(y_label[train_mask], cls_preds[train_mask], average='weighted', zero_division=0)
-    te_rec = recall_score(y_label[test_mask], cls_preds[test_mask], average='weighted', zero_division=0)
+    tr_prec_macro = precision_score(y_label[train_mask], cls_preds[train_mask], average='macro', zero_division=0)
+    te_prec_macro = precision_score(y_label[test_mask], cls_preds[test_mask], average='macro', zero_division=0)
+    tr_prec_weighted = precision_score(y_label[train_mask], cls_preds[train_mask], average='weighted', zero_division=0)
+    te_prec_weighted = precision_score(y_label[test_mask], cls_preds[test_mask], average='weighted', zero_division=0)
+
+    tr_rec_macro = recall_score(y_label[train_mask], cls_preds[train_mask], average='macro', zero_division=0)
+    te_rec_macro = recall_score(y_label[test_mask], cls_preds[test_mask], average='macro', zero_division=0)
+    tr_rec_weighted = recall_score(y_label[train_mask], cls_preds[train_mask], average='weighted', zero_division=0)
+    te_rec_weighted = recall_score(y_label[test_mask], cls_preds[test_mask], average='weighted', zero_division=0)
+
+    try:
+        tr_auc_macro = roc_auc_score(y_label[train_mask], cls_proba[train_mask], multi_class='ovr', average='macro', labels=[0, 1, 2])
+        tr_auc_weighted = roc_auc_score(y_label[train_mask], cls_proba[train_mask], multi_class='ovr', average='weighted', labels=[0, 1, 2])
+    except Exception:
+        tr_auc_macro = np.nan
+        tr_auc_weighted = np.nan
+
+    try:
+        te_auc_macro = roc_auc_score(y_label[test_mask], cls_proba[test_mask], multi_class='ovr', average='macro', labels=[0, 1, 2])
+        te_auc_weighted = roc_auc_score(y_label[test_mask], cls_proba[test_mask], multi_class='ovr', average='weighted', labels=[0, 1, 2])
+    except Exception:
+        te_auc_macro = np.nan
+        te_auc_weighted = np.nan
 
     metrics = pd.DataFrame([
         {
             '구분': 'Train',
-            'accuracy': round(tr_acc, 4),
-            'precision': round(tr_prec, 4),
-            'f1': round(tr_f1, 4),
-            'recall': round(tr_rec, 4)
+            'Accuracy(%)': round(tr_acc*100, 2),
+            'F1_Macro': round(tr_f1_macro, 4),
+            'F1_Weighted': round(tr_f1_weighted, 4),
+            'Precision_Macro': round(tr_prec_macro, 4),
+            'Precision_Weighted': round(tr_prec_weighted, 4),
+            'Recall_Macro': round(tr_rec_macro, 4),
+            'Recall_Weighted': round(tr_rec_weighted, 4),
+            'AUC_Macro': round(tr_auc_macro, 4) if not np.isnan(tr_auc_macro) else 'N/A',
+            'AUC_Weighted': round(tr_auc_weighted, 4) if not np.isnan(tr_auc_weighted) else 'N/A'
         },
         {
             '구분': 'Test',
-            'accuracy': round(te_acc, 4),
-            'precision': round(te_prec, 4),
-            'f1': round(te_f1, 4),
-            'recall': round(te_rec, 4)
+            'Accuracy(%)': round(te_acc*100, 2),
+            'F1_Macro': round(te_f1_macro, 4),
+            'F1_Weighted': round(te_f1_weighted, 4),
+            'Precision_Macro': round(te_prec_macro, 4),
+            'Precision_Weighted': round(te_prec_weighted, 4),
+            'Recall_Macro': round(te_rec_macro, 4),
+            'Recall_Weighted': round(te_rec_weighted, 4),
+            'AUC_Macro': round(te_auc_macro, 4) if not np.isnan(te_auc_macro) else 'N/A',
+            'AUC_Weighted': round(te_auc_weighted, 4) if not np.isnan(te_auc_weighted) else 'N/A'
         }
     ])
     metrics_path = os.path.join(results_dir, 'test_metrics.csv')
@@ -259,6 +289,5 @@ def test_model():
     plt.close()
     print(f"\n[OK] 테스트 완료: {int(correct)}/{total} 맞춤")
     print(f"[PLOT] 대시보드 저장: {fig_path}")
-
 if __name__ == '__main__':
     test_model()
