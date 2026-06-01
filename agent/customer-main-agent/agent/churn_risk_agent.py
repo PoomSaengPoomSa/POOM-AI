@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
+from langsmith import traceable
 
 # db 및 tool 임포트
 from db import root_env_path
@@ -42,9 +43,11 @@ class ChurnAssessment2(BaseModel):
     )
 
 class ToolSelection2(BaseModel):
-    call_get_customer_features: bool = Field(description="고객의 최근 3개월 특징 기록을 조회할지 여부. 고객 유지 및 행동 성향 파악을 위해 참(True)으로 설정합니다.")
-    call_get_large_external_transactions: bool = Field(description="고객의 타행 거액 송금 내역을 조회할지 여부. 자산이 고액이거나 대출이 있어 이탈 징후 분석이 필요할 때 참(True)으로 설정합니다.")
-    transaction_threshold: Optional[float] = Field(description="거액 송금 조회 기준 금액 (원 단위, 기본값 10,000,000원), 필요 없으면 None", default=10000000.0)
+    call_customer: bool = Field(description="고객 기본 프로필 및 자산 비중 정보(customer)를 조회할지 여부.")
+    call_customer_account: bool = Field(description="고객의 상세 계좌 유형 및 잔액 정보(customer_account)를 조회할지 여부.")
+    call_customer_product: bool = Field(description="고객이 보유한 예적금/금융상품 가입 목록(customer_product)을 조회할지 여부.")
+    call_customer_information: bool = Field(description="최근 1개월간 기록된 고객의 정성적 행동 특징 메모(customer_information)를 조회할지 여부.")
+    call_customer_transaction: bool = Field(description="최근 3개월간 기록된 고객의 상세 거래 내역(customer_transaction)을 조회할지 여부.")
     reason: str = Field(description="도구 수집 판단 근거 (한 문장)")
 
 # 2. State 정의
@@ -52,8 +55,10 @@ class Agent2State(TypedDict):
     customer_id: int
     portfolio: Optional[Dict[str, Any]]
     tool_selection: Optional[Dict[str, Any]]
-    recent_features: Optional[List[Dict[str, Any]]]
-    large_transactions: Optional[List[Dict[str, Any]]]
+    customer_accounts: Optional[List[Dict[str, Any]]]
+    customer_products: Optional[List[Dict[str, Any]]]
+    customer_features: Optional[List[Dict[str, Any]]]
+    customer_transactions: Optional[List[Dict[str, Any]]]
     churn_grade: Optional[str]
     churn_reason: Optional[str]
     errors: List[str]
@@ -108,22 +113,39 @@ def execute_selected_tools_node(state: Agent2State) -> Dict[str, Any]:
     customer_id = state["customer_id"]
     tool_selection = state["tool_selection"]
 
-    recent_features = []
-    large_transactions = []
+    portfolio = state.get("portfolio")
+    customer_accounts = []
+    customer_products = []
+    customer_features = []
+    customer_transactions = []
 
     try:
-        if tool_selection.get("call_get_customer_features"):
-            print("   [Tool Run - ChurnRisk] Running get_customer_features(months=3)")
-            recent_features = tools.get_customer_features(customer_id, months=3)
+        if tool_selection.get("call_customer"):
+            print("   [Tool Run - ChurnRisk] Fetching customer profile details (customer)")
+            portfolio = tools.get_portfolio_weight(customer_id)
         
-        if tool_selection.get("call_get_large_external_transactions"):
-            threshold = tool_selection.get("transaction_threshold") or 10000000.0
-            print(f"   [Tool Run - ChurnRisk] Running get_large_external_transactions(threshold={threshold:,}원)")
-            large_transactions = tools.get_large_external_transactions(customer_id, threshold_amount=threshold)
+        if tool_selection.get("call_customer_account"):
+            print("   [Tool Run - ChurnRisk] Fetching customer accounts (customer_account)")
+            customer_accounts = tools.get_customer_accounts(customer_id)
+        
+        if tool_selection.get("call_customer_product"):
+            print("   [Tool Run - ChurnRisk] Fetching customer active products (customer_product)")
+            customer_products = tools.get_customer_active_products(customer_id)
+        
+        if tool_selection.get("call_customer_information"):
+            print("   [Tool Run - ChurnRisk] Fetching customer features (customer_information) - Last 1 Month")
+            customer_features = tools.get_customer_features(customer_id, months=1)
+        
+        if tool_selection.get("call_customer_transaction"):
+            print("   [Tool Run - ChurnRisk] Fetching customer transactions (customer_transaction) - Last 3 Months")
+            customer_transactions = tools.get_customer_transactions(customer_id, months=3)
 
         return {
-            "recent_features": recent_features,
-            "large_transactions": large_transactions
+            "portfolio": portfolio,
+            "customer_accounts": customer_accounts,
+            "customer_products": customer_products,
+            "customer_features": customer_features,
+            "customer_transactions": customer_transactions
         }
     except Exception as e:
         errors.append(f"execute_selected_tools failed: {str(e)}")
@@ -134,28 +156,63 @@ def analyze_churn_node(state: Agent2State) -> Dict[str, Any]:
     if errors:
         return {}
     portfolio = state["portfolio"]
-    recent_features = state["recent_features"]
-    large_transactions = state["large_transactions"]
+    customer_accounts = state.get("customer_accounts", [])
+    customer_products = state.get("customer_products", [])
+    customer_features = state.get("customer_features", [])
+    customer_transactions = state.get("customer_transactions", [])
+    tool_selection = state["tool_selection"]
 
-    if state["tool_selection"].get("call_get_customer_features"):
+    if tool_selection.get("call_customer"):
+        portfolio_str = (
+            f"- 고객명: {portfolio['name']}\n"
+            f"- 투자성향: {portfolio['tendency']}\n"
+            f"- 등급: {portfolio['grade']}\n"
+            f"- 총자산: {portfolio['total_assets']:,}원\n"
+            f"  - 예금: {portfolio['deposit']:,}원 (순자산 대비 비중: {portfolio['deposit']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 투자: {portfolio['investment']:,}원 (순자산 대비 비중: {portfolio['investment']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 연금: {portfolio['pension']:,}원 (순자산 대비 비중: {portfolio['pension']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 대출: {portfolio['loan']:,}원 (순자산 대비 부채비율: {portfolio['loan']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 순자산: {portfolio['net_worth']:,}원\n"
+        )
+    else:
+        portfolio_str = "[참고] 에이전트의 수집 판단 제외: 고객 자산 프로필 조회가 스킵되었습니다."
+
+    if tool_selection.get("call_customer_account"):
+        acc_list = []
+        for acc in customer_accounts:
+            acc_list.append(f"- 계좌번호: {acc['account_num']}, 유형: {acc['account_type']}, 잔액: {acc['balance']:,}원")
+        accounts_str = "\n".join(acc_list) if acc_list else "보유 중인 상세 계좌 정보 없음."
+    else:
+        accounts_str = "[참고] 에이전트의 수집 판단 제외: 상세 계좌 유형 및 잔액 정보가 제외되었습니다."
+
+    if tool_selection.get("call_customer_product"):
+        prod_list = []
+        for prod in customer_products:
+            prod_list.append(f"- 상품 ID: {prod['pd_id']}, 상품명: {prod['product_name']} (가입일: {prod['opening_date']}, 만기일: {prod['expiration_date']})")
+        products_str = "\n".join(prod_list) if prod_list else "보유 중인 금융 상품 목록 없음."
+    else:
+        products_str = "[참고] 에이전트의 수집 판단 제외: 가입 상품 및 만기 정보가 제외되었습니다."
+
+    if tool_selection.get("call_customer_information"):
         features_list = []
-        for f in recent_features:
+        for f in customer_features:
             features_list.append(f"[{f['category']} - {f['created_date'].strftime('%Y-%m-%d')}] {f['contents']}")
-        features_str = "\n".join(features_list) if features_list else "최근 3개월 내 기록된 고객 특징 없음."
+        features_str = "\n".join(features_list) if features_list else "최근 1개월 내 기록된 고객 특징 없음."
     else:
         features_str = "[참고] 에이전트의 수집 판단 제외: 고객 행동 특징 분석이 불필요하다고 AI가 진단하여 이력 제외함."
 
-    if state["tool_selection"].get("call_get_large_external_transactions"):
+    if tool_selection.get("call_customer_transaction"):
         tx_list = []
-        for t in large_transactions[:5]:
+        for t in customer_transactions[:10]:
             tx_list.append(
                 f"- 일시: {t['ct_datetime'].strftime('%Y-%m-%d %H:%M:%S')}, "
                 f"금액: {t['amount']:,}원, "
+                f"구분: {'출금' if t['ct_type']=='W' else '입금'}, "
                 f"상대행: {t['opp_bank_name']}, "
                 f"적요: {t['briefs']}, "
                 f"거래후잔액: {t['balance_after']:,}원"
             )
-        tx_str = "\n".join(tx_list) if tx_list else "최근 타행 거액 송금 이력 없음."
+        tx_str = "\n".join(tx_list) if tx_list else "최근 3개월 내 거래 내역 없음."
     else:
         tx_str = "[참고] 에이전트의 수집 판단 제외: 거액 송금 유출 패턴 분석 불필요로 판단하여 거래 이력 제외함."
 
@@ -244,13 +301,16 @@ class ChurnRiskAgent:
             DEFAULT_MODEL = model_name
         self.app = compiled_app2
 
+    @traceable(name="ChurnRiskAgent", run_type="chain", tags=["ChurnRiskAgent"])
     def run(self, customer_id: int) -> Dict[str, Any]:
         initial_state: Agent2State = {
             "customer_id": customer_id,
             "portfolio": None,
             "tool_selection": None,
-            "recent_features": None,
-            "large_transactions": None,
+            "customer_accounts": None,
+            "customer_products": None,
+            "customer_features": None,
+            "customer_transactions": None,
             "churn_grade": None,
             "churn_reason": None,
             "errors": []
