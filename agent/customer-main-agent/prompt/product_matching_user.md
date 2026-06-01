@@ -10,6 +10,16 @@
 ## 3. 본점 주력 상품 명세서 (Active Main Products)
 {products_str}
 
+## 4. [추가 수집 맥락 정보]
+- 보유/가입 중인 금융 상품 목록:
+{active_products_str}
+
+- 가족 관계 정보:
+{relationship_str}
+
+- 계좌유형별 잔액 정보:
+{accounts_str}
+
 ---
 
 ## 판정 및 매칭 규칙
