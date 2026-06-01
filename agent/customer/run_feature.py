@@ -28,6 +28,14 @@ def get_all_customer_ids():
         return [row["c_id"] for row in results]
 
 def main():
+    # CLI encoding defense
+    if sys.platform.startswith('win'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stdin.reconfigure(encoding='utf-8')
+        except AttributeError:
+            pass
+
     parser = argparse.ArgumentParser(description="Poom Customer Feature Agent (Agent 2) Runner")
     parser.add_argument(
         "--c_id", 

@@ -8,8 +8,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
 # db 및 tool 임포트
-from ..db import root_env_path
-from ..tool import tools
+from db import root_env_path
+from tool import tools
 
 # API 키 및 모델 설정
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -280,7 +280,7 @@ def save_matching_node(state: Agent32State) -> Dict[str, Any]:
                 is_suitable=m["is_suitable"],
                 reason=m["reason"]
             )
-        print(f"  [+] Sub Agent 4: 주력 상품 매칭 분석 DB 적재 완료! (고객 ID: {customer_id}, 총 {len(product_matchings)}개 상품)")
+        print(f"  [+] Sub Agent 3: 주력 상품 매칭 분석 DB 적재 완료! (고객 ID: {customer_id}, 총 {len(product_matchings)}개 상품)")
         return {}
     except Exception as e:
         errors.append(f"save_matching failed: {str(e)}")
@@ -308,7 +308,7 @@ compiled_app32 = workflow32.compile()
 
 class ProductMatchingAgent:
     """
-    Sub Agent 4: 주력 상품 매칭 Agent
+    Sub Agent 3: 주력 상품 매칭 Agent
     """
     def __init__(self, model_name: str = None):
         global DEFAULT_MODEL

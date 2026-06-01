@@ -1,5 +1,5 @@
 import datetime
-from ..db import get_db_cursor
+from db import get_db_cursor
 
 def get_portfolio_weight(customer_id: int):
     """

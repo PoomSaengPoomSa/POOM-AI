@@ -8,8 +8,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
 # db 및 tool 임포트
-from ..db import root_env_path
-from ..tool import tools
+from db import root_env_path
+from tool import tools
 
 # API 키 및 모델 설정
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

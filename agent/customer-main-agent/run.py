@@ -2,8 +2,16 @@ import argparse
 import logging
 import sys
 from datetime import datetime
-from .db import get_db_cursor
-from .agent import MainAgent
+import os
+import sys
+
+# Ensure customer-main-agent directory is in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+from db import get_db_cursor
+from agent import MainAgent
 
 # 로깅 환경 설정
 logging.basicConfig(
@@ -35,7 +43,7 @@ def fetch_batch_target_c_ids() -> list:
         WHERE expiration_date >= CURDATE() AND expiration_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
         UNION
         -- (4) 오늘 상담 예약이 확정되어 내방하는 고객
-        SELECT DISTINCT c_id FROM schedule 
+        SELECT DISTINCT c_id FROM pb_schedule 
         WHERE category = '상담' AND DATE(execution_date) = CURDATE() AND c_id IS NOT NULL
     """
     try:
@@ -51,7 +59,7 @@ def fetch_batch_target_c_ids() -> list:
 
 def run_integrated_batch(specified_c_ids: list = None):
     logger.info("==========================================================")
-    logger.info("🤖 POOM-AI 초경량 고객분석 배치 에이전트 구동 개시")
+    logger.info("🤖 POOM-AI 고객분석 배치 에이전트 구동 개시")
     logger.info("==========================================================")
     
     # 1단계: 분석 대상 c_id 리스트 수집
@@ -66,8 +74,8 @@ def run_integrated_batch(specified_c_ids: list = None):
         logger.info("==========================================================")
         return
 
-    # 2단계: 에이전트 인스턴스 초기화 (4개 독립 SubAgent 포함)
-    logger.info("[2단계] 통합 Main Agent 및 4대 SubAgent 모듈 초기화 중...")
+    # 2단계: 에이전트 인스턴스 초기화 (3개 독립 SubAgent 포함)
+    logger.info("[2단계] 통합 Main Agent 및 3대 SubAgent 모듈 초기화 중...")
     main_agent = MainAgent()
 
     # 3단계: 순차 및 독립적 분석 루프 실행
@@ -76,16 +84,16 @@ def run_integrated_batch(specified_c_ids: list = None):
     failure_count = 0
 
     for idx, c_id in enumerate(target_c_ids, 1):
-        logger.info(f"\n({idx}/{len(target_c_ids)}) [고객 ID: {c_id}] 4대 핵심 분석(SubAgent 1, 2, 3, 4) 실행")
+        logger.info(f"\n({idx}/{len(target_c_ids)}) [고객 ID: {c_id}] 3대 핵심 분석(SubAgent 1, 2, 3) 실행")
         
         results = main_agent.run_for_customer(customer_id=c_id)
         
         # 3개 세부 서브 태스크가 모두 성공했는지 여부 판단
-        # (3은 상담 기록 미존재 시 스킵되므로, 로직상 성공으로 카운트됩니다)
+        # (SubAgent 3은 상담 기록 미존재 시 스킵되므로, 로직상 성공으로 카운트됩니다)
         is_all_success = (
             results["sub1_success"] and 
             results["sub2_success"] and 
-            results["sub4_success"]
+            results["sub3_success"]
         )
         
         if is_all_success:

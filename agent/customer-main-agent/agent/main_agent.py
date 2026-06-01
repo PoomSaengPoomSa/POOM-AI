@@ -8,10 +8,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langsmith import traceable
 
 # 서브 에이전트 및 DB 임포트
-from .asset_insight_agent import AssetInsightAgent
-from .churn_risk_agent import ChurnRiskAgent
-from .product_matching_agent import ProductMatchingAgent
-from ..tool import tools
+from agent.asset_insight_agent import AssetInsightAgent
+from agent.churn_risk_agent import ChurnRiskAgent
+from agent.product_matching_agent import ProductMatchingAgent
+from tool import tools
 
 logger = logging.getLogger("IntegratedCustomerAgent")
 
@@ -47,7 +47,7 @@ class MainAgent:
             
         self.sub1 = AssetInsightAgent(model_name=model_name)
         self.sub2 = ChurnRiskAgent(model_name=model_name)
-        self.sub4 = ProductMatchingAgent(model_name=model_name)
+        self.sub3 = ProductMatchingAgent(model_name=model_name)
 
     @traceable(name="MainAgent.run_for_customer", run_type="chain")
     def run_for_customer(self, customer_id: int) -> dict:
@@ -59,7 +59,7 @@ class MainAgent:
             "routing_reason": "",
             "sub1_called": False, "sub1_success": True,
             "sub2_called": False, "sub2_success": True,
-            "sub4_called": False, "sub4_success": True
+            "sub3_called": False, "sub3_success": True
         }
 
         logger.info(f" -> [Main Router] 고객 {customer_id}번 dynamic routing 분석 시작...")
@@ -87,7 +87,7 @@ class MainAgent:
         except Exception as e:
             logger.error(f" -> [Main Router ERROR] 고객 {customer_id} 정보 수집 실패: {e}")
             results["routing_reason"] = f"정보 수집 오류: {e}"
-            results["sub1_success"] = results["sub2_success"] = results["sub4_success"] = False
+            results["sub1_success"] = results["sub2_success"] = results["sub3_success"] = False
             return results
 
         # 2. LLM 라우터 구동을 위한 프롬프트 바인딩 및 의사결정
@@ -125,7 +125,7 @@ class MainAgent:
         except Exception as e:
             logger.error(f" -> [Main Router LLM ERROR] 라우터 의사결정 실패: {e}")
             results["routing_reason"] = f"라우터 구동 오류: {e}"
-            results["sub1_success"] = results["sub2_success"] = results["sub4_success"] = False
+            results["sub1_success"] = results["sub2_success"] = results["sub3_success"] = False
             return results
 
         # 3. 판정에 따른 선택적 서브 에이전트 샌드박스 구동
@@ -158,17 +158,17 @@ class MainAgent:
 
         # (이전 Sub Agent 3 상담 특징 추출 부분은 제거되었습니다.)
 
-        # 3-4. Sub Agent 4: 주력 금융 상품 적합성 평가
+        # 3-3. Sub Agent 3: 주력 금융 상품 적합성 평가
         if routing.run_product_matching:
-            results["sub4_called"] = True
+            results["sub3_called"] = True
             try:
-                logger.info(f"   -> [Sub Agent 4] 주력 금융 상품 적합성 평가 시작...")
-                self.sub4.run(customer_id)
-                results["sub4_success"] = True
+                logger.info(f"   -> [Sub Agent 3] 주력 금융 상품 적합성 평가 시작...")
+                self.sub3.run(customer_id)
+                results["sub3_success"] = True
             except Exception as e:
-                logger.error(f"   -> [Sub Agent 4 ERROR] 고객 {customer_id} 상품 적합성 평가 중 오류: {e}")
-                results["sub4_success"] = False
+                logger.error(f"   -> [Sub Agent 3 ERROR] 고객 {customer_id} 상품 적합성 평가 중 오류: {e}")
+                results["sub3_success"] = False
         else:
-            logger.info(f"   -> [Sub Agent 4 SKIP] 라우터의 배제 판단으로 구동을 건너뜁니다.")
+            logger.info(f"   -> [Sub Agent 3 SKIP] 라우터의 배제 판단으로 구동을 건너뜁니다.")
 
         return results
