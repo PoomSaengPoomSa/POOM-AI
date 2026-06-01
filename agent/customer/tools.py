@@ -113,7 +113,7 @@ def get_customer_features(customer_id: int, months: int = 3):
     Get customer features extracted from the database for the given period (months).
     """
     query = """
-        SELECT category, contents, created_date
+        SELECT ci_id, category, contents, created_date
         FROM customer_information
         WHERE c_id = %s AND created_date >= DATE_SUB(NOW(), INTERVAL %s MONTH)
         ORDER BY created_date DESC
@@ -122,6 +122,7 @@ def get_customer_features(customer_id: int, months: int = 3):
         cursor.execute(query, (customer_id, months))
         results = cursor.fetchall()
         return results
+
 
 def get_large_external_transactions(customer_id: int, threshold_amount: float = 10000000.0):
     """
@@ -204,6 +205,25 @@ def save_customer_feature(customer_id: int, category: str, contents: str):
         rows_affected = cursor.execute(query, (customer_id, category, contents))
         return rows_affected > 0
 
+def delete_customer_feature(ci_id: int):
+    """
+    Delete a specific customer feature row from customer_information.
+    """
+    query = "DELETE FROM customer_information WHERE ci_id = %s"
+    with get_db_cursor() as cursor:
+        rows_affected = cursor.execute(query, (ci_id,))
+        return rows_affected > 0
+
+def update_customer_feature(ci_id: int, contents: str):
+    """
+    Update the contents of a specific customer feature row in customer_information.
+    """
+    query = "UPDATE customer_information SET contents = %s, created_date = NOW() WHERE ci_id = %s"
+    with get_db_cursor() as cursor:
+        rows_affected = cursor.execute(query, (contents, ci_id))
+        return rows_affected > 0
+
+
 def get_main_products():
     """
     Retrieve active bank main products from the product table.
@@ -279,3 +299,17 @@ def get_customer_accounts(customer_id: int):
         cursor.execute(query, (customer_id,))
         results = cursor.fetchall()
         return results
+
+def save_customer_keyword_features(customer_id: int, keywords_str: str):
+    """
+    Update the customer table's features column with a comma-separated keywords string.
+    """
+    query = """
+        UPDATE customer
+        SET features = %s
+        WHERE c_id = %s
+    """
+    with get_db_cursor() as cursor:
+        rows_affected = cursor.execute(query, (keywords_str, customer_id))
+        return rows_affected > 0
+

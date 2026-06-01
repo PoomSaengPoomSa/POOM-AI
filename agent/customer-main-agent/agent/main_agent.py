@@ -10,7 +10,6 @@ from langsmith import traceable
 # 서브 에이전트 및 DB 임포트
 from .asset_insight_agent import AssetInsightAgent
 from .churn_risk_agent import ChurnRiskAgent
-from .feature_extraction_agent import FeatureExtractionAgent
 from .product_matching_agent import ProductMatchingAgent
 from ..tool import tools
 
@@ -33,8 +32,7 @@ def load_prompt(filename: str) -> str:
 class SubAgentRouting(BaseModel):
     run_asset_insight: bool = Field(description="자산 리밸런싱 인사이트 에이전트(Sub Agent 1) 구동 여부. 고객 정보(자산 등)가 수정된 이후에 AI 분석이 없었거나, 1억 이상 우량 고객인 경우 등.")
     run_churn_risk: bool = Field(description="이탈 위험 수준 분석 에이전트(Sub Agent 2) 구동 여부. 최근 거액 거래(출금)가 발생했거나, 이탈 징후가 있을 때.")
-    run_feature_extraction: bool = Field(description="상담 특징 정보 추출 에이전트(Sub Agent 3) 구동 여부. 최근 상담 기록이 있고 신규 특징 정보 추출이 필요할 때. 단, 최근 상담 보고서 존재 여부가 False이면 무조건 False여야 함.")
-    run_product_matching: bool = Field(description="주력 금융 상품 적합성 평가 에이전트(Sub Agent 4) 구동 여부. 신규 상담 기록이 있고 추천 가능한 상품 매칭이 필요할 때. 단, 최근 상담 보고서 존재 여부가 False이면 무조건 False여야 함.")
+    run_product_matching: bool = Field(description="주력 금융 상품 적합성 평가 에이전트(Sub Agent 3) 구동 여부. 신규 상담 기록이 있고 추천 가능한 상품 매칭이 필요할 때. 단, 최근 상담 보고서 존재 여부가 False이면 무조건 False여야 함.")
     reason: str = Field(description="각 서브 에이전트 선택 여부에 대한 분석적 판단 근거 (한 문장)")
 
 class MainAgent:
@@ -49,7 +47,6 @@ class MainAgent:
             
         self.sub1 = AssetInsightAgent(model_name=model_name)
         self.sub2 = ChurnRiskAgent(model_name=model_name)
-        self.sub3 = FeatureExtractionAgent(model_name=model_name)
         self.sub4 = ProductMatchingAgent(model_name=model_name)
 
     @traceable(name="MainAgent.run_for_customer", run_type="chain")
@@ -62,7 +59,6 @@ class MainAgent:
             "routing_reason": "",
             "sub1_called": False, "sub1_success": True,
             "sub2_called": False, "sub2_success": True,
-            "sub3_called": False, "sub3_success": True,
             "sub4_called": False, "sub4_success": True
         }
 
@@ -91,7 +87,7 @@ class MainAgent:
         except Exception as e:
             logger.error(f" -> [Main Router ERROR] 고객 {customer_id} 정보 수집 실패: {e}")
             results["routing_reason"] = f"정보 수집 오류: {e}"
-            results["sub1_success"] = results["sub2_success"] = results["sub3_success"] = results["sub4_success"] = False
+            results["sub1_success"] = results["sub2_success"] = results["sub4_success"] = False
             return results
 
         # 2. LLM 라우터 구동을 위한 프롬프트 바인딩 및 의사결정
@@ -122,14 +118,14 @@ class MainAgent:
             chain = prompt | structured_llm
             routing: SubAgentRouting = chain.invoke({"user_content": user_prompt})
             
-            logger.info(f" -> [Main Router 결정] 자산분석={routing.run_asset_insight}, 이탈분석={routing.run_churn_risk}, 특징추출={routing.run_feature_extraction}, 상품매칭={routing.run_product_matching}")
+            logger.info(f" -> [Main Router 결정] 자산분석={routing.run_asset_insight}, 이탈분석={routing.run_churn_risk}, 상품매칭={routing.run_product_matching}")
             logger.info(f" -> [Main Router 사유] {routing.reason}")
             results["routing_reason"] = routing.reason
 
         except Exception as e:
             logger.error(f" -> [Main Router LLM ERROR] 라우터 의사결정 실패: {e}")
             results["routing_reason"] = f"라우터 구동 오류: {e}"
-            results["sub1_success"] = results["sub2_success"] = results["sub3_success"] = results["sub4_success"] = False
+            results["sub1_success"] = results["sub2_success"] = results["sub4_success"] = False
             return results
 
         # 3. 판정에 따른 선택적 서브 에이전트 샌드박스 구동
@@ -160,18 +156,7 @@ class MainAgent:
         else:
             logger.info(f"   -> [Sub Agent 2 SKIP] 라우터의 배제 판단으로 구동을 건너뜁니다.")
 
-        # 3-3. Sub Agent 3: 상담 보고서 기반 특징 추출
-        if routing.run_feature_extraction:
-            results["sub3_called"] = True
-            try:
-                logger.info(f"   -> [Sub Agent 3] 상담 특징 정보 추출 시작...")
-                self.sub3.run(customer_id)
-                results["sub3_success"] = True
-            except Exception as e:
-                logger.error(f"   -> [Sub Agent 3 ERROR] 고객 {customer_id} 특징 추출 중 오류: {e}")
-                results["sub3_success"] = False
-        else:
-            logger.info(f"   -> [Sub Agent 3 SKIP] 라우터의 배제 판단으로 구동을 건너뜁니다.")
+        # (이전 Sub Agent 3 상담 특징 추출 부분은 제거되었습니다.)
 
         # 3-4. Sub Agent 4: 주력 금융 상품 적합성 평가
         if routing.run_product_matching:

@@ -80,12 +80,11 @@ def run_integrated_batch(specified_c_ids: list = None):
         
         results = main_agent.run_for_customer(customer_id=c_id)
         
-        # 4개 세부 서브 태스크가 모두 성공했는지 여부 판단
-        # (3, 4는 상담 기록 미존재 시 스킵되므로, 로직상 성공으로 카운트됩니다)
+        # 3개 세부 서브 태스크가 모두 성공했는지 여부 판단
+        # (3은 상담 기록 미존재 시 스킵되므로, 로직상 성공으로 카운트됩니다)
         is_all_success = (
             results["sub1_success"] and 
             results["sub2_success"] and 
-            results["sub3_success"] and 
             results["sub4_success"]
         )
         
