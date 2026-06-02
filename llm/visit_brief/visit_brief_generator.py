@@ -505,7 +505,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                         memo_snippet = clean_memo[:100] + "..." if len(clean_memo) > 100 else clean_memo
                         # 포맷 규격화
                         history_list.append(
-                            f"[{h.consult_date.strftime('%Y-%m-%d')}] 상담 내용: {memo_snippet} | AI 요약: {rep_summary}"
+                            f"[{h.consult_date.strftime('%Y-%m-%d')}] 상담 내용: {memo_snippet} | AI 요약: {rep_summary} | ID: {h.cm_id}"
                         )
                         if len(history_list) >= 3:
                             break
