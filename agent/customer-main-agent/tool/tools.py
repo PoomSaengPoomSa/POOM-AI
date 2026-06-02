@@ -2,7 +2,7 @@ import datetime
 from db import get_db_cursor
 from langsmith import traceable
 
-def get_portfolio_weight(customer_id: int):
+def get_customer(customer_id: int):
     """
     Get customer asset portfolio details.
     """

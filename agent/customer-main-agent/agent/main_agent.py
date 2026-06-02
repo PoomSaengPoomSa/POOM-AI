@@ -16,7 +16,7 @@ from tool import tools
 
 logger = logging.getLogger("IntegratedCustomerAgent")
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-4o"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 프롬프트 동적 로드 헬퍼 함수
@@ -80,7 +80,7 @@ class MainAgent:
 
         # 1. 고객 현황 및 거래/상담 정보 수집
         try:
-            portfolio = tools.get_portfolio_weight(customer_id)
+            portfolio = tools.get_customer(customer_id)
             if not portfolio:
                 raise ValueError(f"Customer with ID {customer_id} not found in database.")
             

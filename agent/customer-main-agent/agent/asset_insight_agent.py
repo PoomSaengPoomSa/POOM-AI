@@ -59,7 +59,7 @@ def load_basic_profile_node(state: Agent1State) -> Dict[str, Any]:
     customer_id = state["customer_id"]
     errors = list(state.get("errors", []))
     try:
-        portfolio = tools.get_portfolio_weight(customer_id)
+        portfolio = tools.get_customer(customer_id)
         if not portfolio:
             raise ValueError(f"Customer with ID {customer_id} not found in database.")
         return {"portfolio": portfolio, "errors": errors}
@@ -122,7 +122,7 @@ def execute_selected_tools_node(state: Agent1State) -> Dict[str, Any]:
     try:
         if tool_selection.get("call_customer"):
             print("   [Tool Run - AssetInsight] Fetching customer profile details (customer)")
-            portfolio = tools.get_portfolio_weight(customer_id)
+            portfolio = tools.get_customer(customer_id)
         
         if tool_selection.get("call_customer_account"):
             print("   [Tool Run - AssetInsight] Fetching customer accounts (customer_account)")
@@ -237,13 +237,54 @@ def verify_insight_node(state: Agent1State) -> Dict[str, Any]:
     if errors:
         return {}
     insight = state.get("asset_insight")
+    portfolio = state.get("portfolio")
     if not insight:
         errors.append("verify_insight failed: No asset_insight found in state.")
         return {"errors": errors}
     
     try:
+        # LLM 기반 비즈니스 적절성 및 정합성 검증 레이어 가동
+        verifier_system_prompt = (
+            "당신은 대한민국 최고 은행의 자산분석 보고서 품질 심사역입니다.\n"
+            "제시된 [고객 정보]와 작성된 [자산 분석 보고서 초안]을 대조하여, 초안이 금융 비즈니스 가이드라인을 준수하는지 정밀 평가하고 필요시 교정본을 작성해 주십시오.\n\n"
+            "### [금융 비즈니스 검증 항목]\n"
+            "1. **투자 성향 적합성**: 고객의 투자 성향(예: 안정형, 안정추구형)에 반하는 고위험 자산(예: 공격적 주식 투자, 고레버리지 상품 등)의 확대를 권장하고 있는지 체크하고, 그렇다면 원금 보존형 채권이나 우량 적금 중심의 보수적 리밸런싱 지침으로 교정하십시오.\n"
+            "2. **대출 건전성**: 대출 부채 비중이 과도하게 높은 고객(예: 부채 비율 30% 이상)임에도 불구하고 대출 상환에 대한 제안이나 자산 건전성 확보 가이드가 누락되었다면, 대출 조기 상환 및 부채 경감 권고를 추가하십시오.\n"
+            "3. **거시지표 일관성**: 제안된 리밸런싱 방향성이 현재 거시 지표(예: 금리 인하기에는 장기채나 확정금리 자산 선호)와 상충되지 않는지 확인하고 일관되게 교정하십시오.\n\n"
+            "### [출력 및 규격 제한 (엄격 적용)]\n"
+            "- 작성된 교정본은 반드시 **공백 포함 150자 이내**여야 합니다.\n"
+            "- 독자는 PB이며, 고객 호칭은 3인칭(\"고객\", \"해당 고객\")만 사용하십시오.\n"
+            "- 마크다운 기호(#, *, _, -, | 등)를 절대 포함하지 마십시오.\n"
+            "- 교정이 불필요하고 완벽하게 적절한 경우, 입력된 [자산 분석 보고서 초안]을 한 글자도 바꾸지 말고 그대로 반환하십시오."
+        )
+        
+        net_worth = max(1, portfolio.get('net_worth', 1))
+        customer_info_str = (
+            f"- 고객명: {portfolio.get('name')}\n"
+            f"- 투자성향: {portfolio.get('tendency')}\n"
+            f"- 등급: {portfolio.get('grade')}\n"
+            f"- 총자산: {portfolio.get('total_assets', 0):,}원\n"
+            f"  - 예금: {portfolio.get('deposit', 0):,}원 (비중: {portfolio.get('deposit', 0)/net_worth*100:.1f}%)\n"
+            f"  - 대출: {portfolio.get('loan', 0):,}원 (부채비율: {portfolio.get('loan', 0)/net_worth*100:.1f}%)\n"
+            f"  - 순자산: {portfolio.get('net_worth', 0):,}원\n"
+        )
+        
+        user_content = (
+            f"### [고객 정보]\n{customer_info_str}\n"
+            f"### [자산 분석 보고서 초안]\n{insight}\n"
+        )
+        
+        llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=OPENAI_API_KEY)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", verifier_system_prompt),
+            ("user", "{user_content}")
+        ])
+        chain = prompt | llm
+        response = chain.invoke({"user_content": user_content})
+        verified_insight = response.content.strip()
+        
         # 1. 2인칭("고객님") -> 3인칭("고객") 교정
-        cleaned = insight.replace("고객님", "고객")
+        cleaned = verified_insight.replace("고객님", "고객")
         
         # 2. 마크다운 기호 제거
         for char in ['*', '#', '_', '|', '`', '-']:
@@ -258,7 +299,12 @@ def verify_insight_node(state: Agent1State) -> Dict[str, Any]:
             if not cleaned.endswith('.'):
                 cleaned += "."
                 
-        print(f"   [Verification Node] Verification completed. Original length: {len(insight)}, Cleaned length: {len(cleaned)}")
+        # 4. 최종 글자 수(150자) 체크 및 자르기
+        if len(cleaned) > 150:
+            print(f"   [Verification Node] Warning: Insight length ({len(cleaned)}) exceeds 150 chars. Truncating.")
+            cleaned = cleaned[:147] + "..."
+            
+        print(f"   [Verification Node] Verification completed. Original length: {len(insight)}, Verified length: {len(cleaned)}")
         return {"asset_insight": cleaned.strip()}
     except Exception as e:
         errors.append(f"verify_insight failed: {str(e)}")
