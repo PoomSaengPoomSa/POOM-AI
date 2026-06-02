@@ -12,11 +12,12 @@ POOM-AI는 VIP 고객 데이터에 대해 리소스를 효율적으로 분배하
 ```mermaid
 flowchart TD
     %% CLI / Batch Entry
-    Start([1. run.py 배치 구동]) --> FetchCIDs[2. 분석 대상 VVIP 고객 ID 리스트 추출]
+    Start([1. run.py 배치 구동]) --> FetchCIDs[2. 1단계: DB 스캔 후보 VVIP 고객 추출]
     
     subgraph MainAgent [MainAgent Orchestration]
-        FetchCIDs --> LoopCIDs{각 고객 순회 루프}
-        LoopCIDs --> GatherInfo[3. 사전 라우팅 데이터 수집]
+        FetchCIDs --> AISelector{3. 2단계: AI Selector 최종 엄선<br>gpt-4o-mini}
+        AISelector -- 선별된 ID 목록 --> LoopCIDs{각 선정 고객 순회 루프}
+        LoopCIDs --> GatherInfo[4. 사전 라우팅 데이터 수집]
         
         %% DB Queries for MainAgent
         GatherInfo --> DB_Profile[(DB: customer)]
@@ -24,12 +25,12 @@ flowchart TD
         GatherInfo --> DB_Report[(DB: consultation_report)]
         
         %% Main Agent Routing Decision
-        DB_Profile & DB_Tx & DB_Report --> MainRouter{4. Main Router LLM 의사결정<br>gpt-4o-mini}
+        DB_Profile & DB_Tx & DB_Report --> MainRouter{5. Main Router LLM 의사결정<br>gpt-4o-mini}
         
         %% Branching
-        MainRouter -- run_asset_insight = True --> Sub1Call[5-1. SubAgent 1 가동]
-        MainRouter -- run_churn_risk = True --> Sub2Call[5-2. SubAgent 2 가동]
-        MainRouter -- run_product_matching = True --> Sub3Call[5-3. SubAgent 3 가동]
+        MainRouter -- run_asset_insight = True --> Sub1Call[6-1. SubAgent 1 가동]
+        MainRouter -- run_churn_risk = True --> Sub2Call[6-2. SubAgent 2 가동]
+        MainRouter -- run_product_matching = True --> Sub3Call[6-3. SubAgent 3 가동]
     end
     
     %% Database Output mapping
@@ -37,7 +38,7 @@ flowchart TD
     Sub2Call --> DB_Churn[(DB: churn_level)]
     Sub3Call --> DB_Matching[(DB: product_matching)]
     
-    DB_Insight & DB_Churn & DB_Matching --> Reporting[6. 최종 분석 루프 완료 보고 및 결과 출력]
+    DB_Insight & DB_Churn & DB_Matching --> Reporting[7. 최종 분석 루프 완료 보고 및 결과 출력]
     Reporting --> End([배치 완료])
 ```
 
@@ -166,16 +167,26 @@ class Agent3State(TypedDict):
 ### 4.0. MainAgent: 통합 오케스트레이션 및 배치 흐름
 `MainAgent`는 단일 고객 분석을 가동하는 `run_for_customer(customer_id)`와 전체 배치 분석을 일괄 제어하는 `run_batch(specified_c_ids)` 엔트리 포인트를 제공합니다.
 
-1. **VVIP 대상 자동 스캔 (run_batch)**:
-   - 특정 고객 ID 목록(`specified_c_ids`)이 전달되지 않은 경우, `tools.fetch_batch_target_c_ids`를 호출하여 분석이 시급한 VIP 타겟들을 자동으로 스캔합니다.
-2. **사전 라우팅 정보 수집 (run_for_customer)**:
-   - `tools.get_portfolio_weight`를 통한 고객 자산 데이터 조회.
-   - `tools.get_large_external_transactions`를 통해 최근 7일 내 1천만 원 이상 타행 송금 이출금 내역 조회.
-   - `tools.get_recent_consultation_report`를 통해 최근 상담 보고서 존재 여부 조회.
-3. **동적 라우팅 결정 (Main Router)**:
-   - 프롬프트 템플릿(`main_agent_router_system.md`, `main_agent_router_user.md`)에 위 수집된 지표를 주입하고 `gpt-4o-mini` 구조화된 출력을 활용하여 `SubAgentRouting` 결정.
-   - **배제 조건 규칙**: 상담 보고서가 존재하지 않는 경우 (`has_consultation_report` = False) SubAgent 3은 무조건 배제(`run_product_matching` = False)되도록 프롬프트 가이드라인을 강제합니다.
-4. **서브 에이전트 구동 및 통계 기록**:
+1. **1단계: DB 스캔 후보군 수집 (run_batch)**:
+   - 특정 고객 ID 목록(`specified_c_ids`)이 전달되지 않은 경우, `tools.fetch_batch_target_c_ids`를 호출하여 아래 **6대 핵심 조건**에 부합하는 VIP 분석 후보군 및 프로필 지표(자산, 부채 등)를 1차 수집합니다.
+     - **조건 1**: 최신 이탈 위험 수준이 `'위험'`인 고객
+     - **조건 2**: 마지막 방문(상담) 이력이 30일 이상 경과했거나 없는 고객 (`consultation_memo` 조회)
+     - **조건 3**: 오늘 상담 예약이 확정되어 내방 예정인 고객
+     - **조건 4**: 최근 7일 내에 타행 거액 이출금(1,000만 원 이상)이 발생한 고객
+     - **조건 5**: 30일 이내에 만기 예정인 금융 상품을 보유한 고객
+     - **조건 6**: 고객 정보가 업데이트(`update_time`)된 이후 AI 분석(`analysis_time`)이 수행된 적이 없거나 오래된 고객
+
+2. **2단계: AI Target Selector를 통한 최종 대상자 선별 (Pruning)**:
+   - 1단계 후보자 목록을 취합하여 AI Target Selector LLM(`gpt-4o-mini`)에 전달하고, 예약 내방자 우선권, 리소스 할당 효율 및 시급성 가이드라인(`batch_target_selector_system.md`)에 근거하여 오늘 실제로 deep analysis를 기동할 최종 VVIP 리스트를 엄선합니다.
+
+3. **3단계: 대상별 사전 라우팅 정보 수집 (run_for_customer)**:
+   - 최종 선별된 고객 각각에 대해 `tools.get_portfolio_weight`, `tools.get_large_external_transactions`, `tools.get_recent_consultation_report` 등을 조회합니다.
+
+4. **4단계: 동적 라우팅 결정 (Main Router)**:
+   - 프롬프트 템플릿(`main_agent_router_system.md`, `main_agent_router_user.md`)에 위 수집된 지표 및 DB 선정 사유를 주입하고, `gpt-4o-mini` 구조화된 출력을 활용하여 오늘 구동할 서브 에이전트 종류(`SubAgentRouting`인 `run_asset_insight`, `run_churn_risk`, `run_product_matching` 등)를 최종 결정합니다.
+   - **배제 조건 규칙**: 상담 보고서가 존재하지 않는 경우 (`has_consultation_report` = False) SubAgent 3은 무조건 배제(`run_product_matching` = False)되도록 지침을 강제합니다.
+
+5. **5단계: 서브 에이전트 구동 및 통계 기록**:
    - 결정된 플래그(`True`)에 매칭되는 서브 에이전트들의 독립 샌드박스 실행 루프를 시작하고 결과를 리포팅합니다.
    - 각 고객별 서브 태스크 성공 여부를 판별하여 최종 배치 보고서에 완료 통계(총 대상, 성공, 실패 수)를 기록합니다.
 

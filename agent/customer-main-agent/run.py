@@ -24,6 +24,21 @@ if __name__ == "__main__":
         type=str, 
         help="수동 분석을 수행할 특정 고객 ID 목록 (예: 1001,1002)"
     )
+    parser.add_argument(
+        "--sub1",
+        action="store_true",
+        help="자산 리밸런싱 인사이트 에이전트(SubAgent 1) 강제 구동 여부"
+    )
+    parser.add_argument(
+        "--sub2",
+        action="store_true",
+        help="이탈 위험 분석 에이전트(SubAgent 2) 강제 구동 여부"
+    )
+    parser.add_argument(
+        "--sub3",
+        action="store_true",
+        help="주력 금융 상품 매칭 에이전트(SubAgent 3) 강제 구동 여부"
+    )
     
     args = parser.parse_args()
     
@@ -41,4 +56,9 @@ if __name__ == "__main__":
 
     # Main Agent 초기화 및 배치 실행 (오케스트레이션 수행)
     main_agent = MainAgent()
-    main_agent.run_batch(specified_ids)
+    main_agent.run_batch(
+        specified_ids, 
+        force_sub1=args.sub1, 
+        force_sub2=args.sub2, 
+        force_sub3=args.sub3
+    )

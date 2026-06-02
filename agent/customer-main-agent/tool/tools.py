@@ -229,39 +229,66 @@ def get_customer_transactions(customer_id: int, months: int = 3):
 @traceable(name="fetch_batch_target_c_ids", run_type="tool")
 def fetch_batch_target_c_ids() -> list:
     """
-    DB 단일 스캔 쿼리를 통해 분석이 시급한 VVIP 고객 ID 및 선정 사유 추출
-    1. 총자산 1억 이상 우량 고객 중 자산분석(llm_insight)이 없는 고객
-    2. 최근 7일 내 타행 고액 이출금(1천만 원 이상)이 발생한 고객 (W = Withdrawal)
-    3. 30일 이내 만기 예정 금융 상품을 보유한 고객
-    4. 오늘 상담 예약이 확정되어 내방하는 고객
+    DB 단일 스캔 쿼리를 통해 분석 후보 VVIP 고객 정보 및 스캔 조건 사유 추출
+    1. 이탈 위험 수준이 '위험'인 고객
+    2. 마지막 방문(상담) 이력이 30일 이상 경과(혹은 없음)한 고객
+    3. 오늘 상담이 예정된 고객
+    4. 최근 7일 내에 타행 거액 거래 내역이 있는 고객
+    5. 만기 예정 상품을 보유한 고객
+    6. 고객 정보가 update된 이후에 AI 분석이 없었던 고객(customer.update_time과 analysis_time 열 확인)
     """
     query = """
-        -- (1) 예금 1억 이상 우량 고객 중 llm_insight가 비어있는 고객
-        SELECT c_id, '1억 이상 우량 고객(llm_insight 미비)' AS reason 
-        FROM customer 
-        WHERE total_assets >= 100000000 AND (llm_insight IS NULL OR llm_insight = '')
-        
-        UNION ALL
-        
-        -- (2) 최근 7일 내 타행 고액 이체 출금이 감지된 고객
-        SELECT DISTINCT c_id, '최근 7일 내 타행 거액 이출금(1천만 원 이상) 발생' AS reason 
-        FROM customer_transaction 
-        WHERE opp_bank_name != '품' AND ct_type = 'W' AND amount >= 10000000 
-          AND ct_datetime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-          
-        UNION ALL
-        
-        -- (3) 30일 이내에 도래하는 만기 예적금 상품 보유 고객
-        SELECT DISTINCT c_id, '30일 이내 만기 예정 금융 상품 보유' AS reason 
-        FROM customer_product 
-        WHERE expiration_date >= CURDATE() AND expiration_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-        
-        UNION ALL
-        
-        -- (4) 오늘 상담 예약이 확정되어 내방하는 고객
-        SELECT DISTINCT c_id, '오늘 상담 예약 확정 내방 예정' AS reason 
-        FROM pb_schedule 
-        WHERE category = '상담' AND DATE(execution_date) = CURDATE() AND c_id IS NOT NULL
+        SELECT c.c_id, c.name, c.total_assets, c.net_worth, c.deposit, c.loan, r.reason
+        FROM customer c
+        JOIN (
+            -- (1) 이탈 위험 수준이 '위험'인 고객
+            SELECT c_id, '이탈 위험 수준 [위험]' AS reason
+            FROM churn_level
+            WHERE created_date = (
+                SELECT MAX(created_date) FROM churn_level WHERE c_id = churn_level.c_id
+            ) AND grade = '위험'
+            
+            UNION ALL
+            
+            -- (2) 마지막 방문(상담) 이력이 30일 이상 경과(혹은 없음)한 고객
+            SELECT c.c_id, '마지막 상담 이력 30일 경과 또는 없음' AS reason
+            FROM customer c
+            LEFT JOIN (
+                SELECT c_id, MAX(consult_date) AS max_consult_date
+                FROM consultation_memo
+                GROUP BY c_id
+            ) m ON c.c_id = m.c_id
+            WHERE m.max_consult_date IS NULL OR m.max_consult_date <= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            
+            UNION ALL
+            
+            -- (3) 오늘 상담이 예정된 고객
+            SELECT DISTINCT c_id, '오늘 상담 예약 확정 내방 예정' AS reason 
+            FROM pb_schedule 
+            WHERE category = '상담' AND DATE(execution_date) = CURDATE() AND c_id IS NOT NULL
+            
+            UNION ALL
+            
+            -- (4) 최근 7일 내에 타행 거액 거래 내역이 있는 고객
+            SELECT DISTINCT c_id, '최근 7일 내 타행 거액 이출금(1천만 원 이상) 발생' AS reason 
+            FROM customer_transaction 
+            WHERE opp_bank_name != '품' AND ct_type = 'W' AND amount >= 10000000 
+              AND ct_datetime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+              
+            UNION ALL
+            
+            -- (5) 만기 예정 상품을 보유한 고객
+            SELECT DISTINCT c_id, '30일 이내 만기 예정 금융 상품 보유' AS reason 
+            FROM customer_product 
+            WHERE expiration_date >= CURDATE() AND expiration_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+            
+            UNION ALL
+            
+            -- (6) 고객 정보가 update된 이후에 AI 분석이 없었던 고객
+            SELECT c_id, '고객 정보 업데이트 후 AI 분석 미수행' AS reason
+            FROM customer
+            WHERE update_time IS NOT NULL AND (analysis_time IS NULL OR update_time > analysis_time)
+        ) r ON c.c_id = r.c_id
     """
     with get_db_cursor() as cursor:
         cursor.execute(query)
@@ -270,13 +297,20 @@ def fetch_batch_target_c_ids() -> list:
         customer_map = {}
         for row in results:
             c_id = row["c_id"]
-            reason = row["reason"]
             if c_id not in customer_map:
-                customer_map[c_id] = []
-            if reason not in customer_map[c_id]:
-                customer_map[c_id].append(reason)
+                customer_map[c_id] = {
+                    "c_id": c_id,
+                    "name": row["name"],
+                    "total_assets": row["total_assets"],
+                    "net_worth": row["net_worth"],
+                    "deposit": row["deposit"],
+                    "loan": row["loan"],
+                    "reasons": []
+                }
+            if row["reason"] not in customer_map[c_id]["reasons"]:
+                customer_map[c_id]["reasons"].append(row["reason"])
                 
-        # 리스트 딕셔너리 형태로 반환: [{"c_id": c_id, "reasons": reasons}, ...]
-        return [{"c_id": c_id, "reasons": reasons} for c_id, reasons in customer_map.items()]
+        # 리스트 형태로 반환: [{"c_id": c_id, "name": name, ... "reasons": reasons}, ...]
+        return list(customer_map.values())
 
 

@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import List
+from typing import List, Dict
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -29,12 +29,24 @@ def load_prompt(filename: str) -> str:
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read().strip()
 
+# 0. AI Batch Target Selector 구조 정의
+class CustomerDecision(BaseModel):
+    c_id: int = Field(description="고객 c_id")
+    selected: bool = Field(description="오늘 정밀 분석 실행 여부 (True = 선정, False = 제외)")
+    reason: str = Field(description="선정 또는 제외 결정 이유 설명")
+
+class SelectedCustomerList(BaseModel):
+    decisions: List[CustomerDecision] = Field(description="각 후보 고객별 최종 분석 기동 결정 리스트")
+
 # 1. Pydantic 라우팅 구조 정의
 class SubAgentRouting(BaseModel):
     run_asset_insight: bool = Field(description="자산 리밸런싱 인사이트 에이전트(Sub Agent 1) 구동 여부. 고객 정보(자산 등)가 수정된 이후에 AI 분석이 없었거나, 1억 이상 우량 고객인 경우 등.")
     run_churn_risk: bool = Field(description="이탈 위험 수준 분석 에이전트(Sub Agent 2) 구동 여부. 최근 거액 거래(출금)가 발생했거나, 이탈 징후가 있을 때.")
     run_product_matching: bool = Field(description="주력 금융 상품 적합성 평가 에이전트(Sub Agent 3) 구동 여부. 신규 상담 기록이 있고 추천 가능한 상품 매칭이 필요할 때. 단, 최근 상담 보고서 존재 여부가 False이면 무조건 False여야 함.")
-    reason: str = Field(description="각 서브 에이전트 선택 여부에 대한 분석적 판단 근거 (한 문장)")
+    reason_asset_insight: str = Field(description="자산 리밸런싱 에이전트(Sub Agent 1)의 구동 혹은 스킵 사유 설명 (구체적 1문장)")
+    reason_churn_risk: str = Field(description="이탈 위험 분석 에이전트(Sub Agent 2)의 구동 혹은 스킵 사유 설명 (구체적 1문장)")
+    reason_product_matching: str = Field(description="주력 금융 상품 매칭 에이전트(Sub Agent 3)의 구동 혹은 스킵 사유 설명 (구체적 1문장)")
+    reason: str = Field(description="각 서브 에이전트 선택 여부에 대한 종합 요약 판단 근거 (한 문장)")
 
 class MainAgent:
     """
@@ -51,7 +63,7 @@ class MainAgent:
         self.sub3 = ProductMatchingAgent(model_name=model_name)
 
     @traceable(name="MainAgent.run_for_customer", run_type="chain", tags=["MainAgent"])
-    def run_for_customer(self, customer_id: int, selection_reasons: List[str] = None) -> dict:
+    def run_for_customer(self, customer_id: int, selection_reasons: List[str] = None, force_sub1: bool = False, force_sub2: bool = False, force_sub3: bool = False) -> dict:
         """
         특정 고객 ID에 대해 dynamic routing을 판단하여 선택적으로 서브 에이전트를 호출합니다.
         """
@@ -97,7 +109,11 @@ class MainAgent:
             system_prompt = load_prompt("main_agent_router_system.md")
             user_prompt_template = load_prompt("main_agent_router_user.md")
 
+            reasons_list = results.get("selection_reasons") or ["수동 지정"]
+            selection_reasons_str = ", ".join(reasons_list)
+
             user_prompt = user_prompt_template.format(
+                selection_reasons_str=selection_reasons_str,
                 name=portfolio["name"],
                 grade=portfolio["grade"],
                 tendency=portfolio["tendency"],
@@ -120,9 +136,29 @@ class MainAgent:
             chain = prompt | structured_llm
             routing: SubAgentRouting = chain.invoke({"user_content": user_prompt})
             
-            logger.info(f" -> [Main Router 결정] 자산분석={routing.run_asset_insight}, 이탈분석={routing.run_churn_risk}, 상품매칭={routing.run_product_matching}")
-            logger.info(f" -> [Main Router 사유] {routing.reason}")
-            results["routing_reason"] = routing.reason
+            # CLI 강제 구동 옵션 처리 (Override)
+            if force_sub1:
+                routing.run_asset_insight = True
+                routing.reason_asset_insight = "[CLI 강제 적용] 자산 분석을 강제 구동합니다."
+            if force_sub2:
+                routing.run_churn_risk = True
+                routing.reason_churn_risk = "[CLI 강제 적용] 이탈 위험 분석을 강제 구동합니다."
+            if force_sub3:
+                routing.run_product_matching = True
+                routing.reason_product_matching = "[CLI 강제 적용] 상품 매칭을 강제 구동합니다."
+            
+            logger.info(f" -> [Main Router 결정 (강제옵션반영)] 자산분석={routing.run_asset_insight}, 이탈분석={routing.run_churn_risk}, 상품매칭={routing.run_product_matching}")
+            logger.info(f" -> [자산분석 사유] {routing.reason_asset_insight}")
+            logger.info(f" -> [이탈분석 사유] {routing.reason_churn_risk}")
+            logger.info(f" -> [상품매칭 사유] {routing.reason_product_matching}")
+            logger.info(f" -> [종합 요약] {routing.reason}")
+            
+            combined_reason = (
+                f"[자산 리밸런싱] {routing.reason_asset_insight}\n"
+                f"[이탈 위험 분석] {routing.reason_churn_risk}\n"
+                f"[주력 금융 상품 매칭] {routing.reason_product_matching}"
+            )
+            results["routing_reason"] = combined_reason
 
         except Exception as e:
             logger.error(f" -> [Main Router LLM ERROR] 라우터 의사결정 실패: {e}")
@@ -176,36 +212,94 @@ class MainAgent:
         return results
 
     @traceable(name="MainAgent.run_batch", run_type="chain", tags=["MainAgent"])
-    def run_batch(self, specified_c_ids: list = None):
+    def run_batch(self, specified_c_ids: list = None, force_sub1: bool = False, force_sub2: bool = False, force_sub3: bool = False):
         """
         Orchestrate batch customer analysis (looping, targeting, and summary reporting).
         """
         logger.info("==========================================================")
         logger.info("🤖 POOM-AI 고객분석 배치 에이전트 구동 개시")
         logger.info("==========================================================")
-        
-        # 1단계: 분석 대상 c_id 리스트 및 선정 사유 수집
-        target_customers = []  # List of {"c_id": int, "reasons": List[str]}
+        # 1단계: DB 스캔을 통해 분석 대상 후보군 수집 (Candidate Targets)
+        target_customers = []  # List of customer dicts with name, assets, reasons
         
         if specified_c_ids:
-            logger.info(f"[1단계] 지정된 수동 고객 분석 실행: {specified_c_ids}")
-            target_customers = [{"c_id": c_id, "reasons": ["수동 분석 대상 지정"]} for c_id in specified_c_ids]
+            logger.info(f"[1단계 DB 스캔] 지정된 수동 고객 분석 실행: {specified_c_ids}")
+            # 수동 실행 시 기본값 채워넣음
+            target_customers = [
+                {
+                    "c_id": c_id, 
+                    "name": "수동지정", 
+                    "total_assets": 0, 
+                    "deposit": 0, 
+                    "loan": 0, 
+                    "reasons": ["수동 분석 대상 지정"]
+                } for c_id in specified_c_ids
+            ]
         else:
             try:
                 target_customers = tools.fetch_batch_target_c_ids()
-                logger.info(f"[고객 선정 Node] 자동 스캔 완료. 총 {len(target_customers)}명의 분석 대상 선별:")
+                logger.info(f"[1단계 DB 스캔] 자동 스캔 완료. 총 {len(target_customers)}명의 분석 후보 선별:")
                 for tc in target_customers:
-                    logger.info(f"  - 고객 ID {tc['c_id']}: {', '.join(tc['reasons'])}")
+                    logger.info(f"  - 고객 ID {tc['c_id']} ({tc['name']}): {', '.join(tc['reasons'])}")
             except Exception as e:
-                logger.error(f"[고객 선정 Node] 대상 조회 실패 (Fallback 적용): {e}")
+                logger.error(f"[1단계 DB 스캔 ERROR] 대상 조회 실패 (Fallback 적용): {e}")
                 target_customers = []
             
         if not target_customers:
-            logger.info("[배치 중단] 오늘 분석을 수행할 대상 고객이 한 명도 존재하지 않습니다.")
+            logger.info("[배치 중단] 오늘 분석 후보군에 부합하는 대상 고객이 한 명도 존재하지 않습니다.")
             logger.info("==========================================================")
             return
 
-        # 2단계: 순차 및 독립적 분석 루프 실행
+        # 2단계: AI Target Selector를 통한 최종 분석 대상자 엄선 (Pruning)
+        # 수동 지정이 아닌 경우에만 AI 선별 과정을 거침
+        if not specified_c_ids:
+            try:
+                logger.info("\n[2단계 AI Target Selector] AI 선별 프로세스 가동 시작...")
+                candidate_list = []
+                for tc in target_customers:
+                    reasons_str = ", ".join(tc["reasons"])
+                    candidate_list.append(
+                        f"- 고객 ID: {tc['c_id']} | 이름: {tc['name']} | 총자산: {tc['total_assets']:,}원 | 예금: {tc['deposit']:,}원 | 대출: {tc['loan']:,}원\n"
+                        f"  * 선정 사유: {reasons_str}"
+                    )
+                candidate_list_str = "\n".join(candidate_list)
+                
+                selector_system = load_prompt("batch_target_selector_system.md")
+                selector_user_template = load_prompt("batch_target_selector_user.md")
+                selector_user = selector_user_template.format(
+                    candidate_count=len(target_customers),
+                    candidate_list_str=candidate_list_str
+                )
+                
+                llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=OPENAI_API_KEY)
+                structured_llm = llm.with_structured_output(SelectedCustomerList)
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", selector_system),
+                    ("user", "{user_content}")
+                ])
+                chain = prompt | structured_llm
+                selection: SelectedCustomerList = chain.invoke({"user_content": selector_user})
+                
+                logger.info("[2단계 AI Target Selector] 분석 대상 선별 의사결정 완료:")
+                for d in selection.decisions:
+                    status = "선정 [O]" if d.selected else "제외 [X]"
+                    logger.info(f"  - 고객 ID {d.c_id}: {status} - 근거: {d.reason}")
+                    
+                selected_ids = {d.c_id for d in selection.decisions if d.selected}
+                filtered_targets = [tc for tc in target_customers if tc["c_id"] in selected_ids]
+                
+                logger.info(f"-> 최종 선정된 고객 수: {len(filtered_targets)}명 (기존 후보군 {len(target_customers)}명 중 {len(target_customers) - len(filtered_targets)}명 제외)")
+                target_customers = filtered_targets
+                
+            except Exception as e:
+                logger.error(f"[2단계 AI Target Selector ERROR] 선별 중 오류 발생 (전체 후보군 분석 fallback 수행): {e}")
+
+        if not target_customers:
+            logger.info("[배치 중단] AI Target Selector가 분석 대상을 모두 제외하여 실행을 중단합니다.")
+            logger.info("==========================================================")
+            return
+
+        # 3단계: 순차 및 독립적 분석 루프 실행
         success_count = 0
         failure_count = 0
 
@@ -215,7 +309,13 @@ class MainAgent:
             logger.info(f"\n({idx}/{len(target_customers)}) [고객 ID: {c_id}] 3대 핵심 분석(SubAgent 1, 2, 3) 실행")
             logger.info(f" -> [선정 사유] {reasons_str}")
             
-            results = self.run_for_customer(customer_id=c_id, selection_reasons=tc["reasons"])
+            results = self.run_for_customer(
+                customer_id=c_id, 
+                selection_reasons=tc["reasons"],
+                force_sub1=force_sub1,
+                force_sub2=force_sub2,
+                force_sub3=force_sub3
+            )
             
             is_all_success = (
                 results["sub1_success"] and 
