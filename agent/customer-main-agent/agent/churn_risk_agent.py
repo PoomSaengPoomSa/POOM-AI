@@ -68,7 +68,7 @@ def load_basic_profile_node(state: Agent2State) -> Dict[str, Any]:
     customer_id = state["customer_id"]
     errors = list(state.get("errors", []))
     try:
-        portfolio = tools.get_portfolio_weight(customer_id)
+        portfolio = tools.get_customer(customer_id)
         if not portfolio:
             raise ValueError(f"Customer with ID {customer_id} not found in database.")
         return {"portfolio": portfolio, "errors": errors}
@@ -122,7 +122,7 @@ def execute_selected_tools_node(state: Agent2State) -> Dict[str, Any]:
     try:
         if tool_selection.get("call_customer"):
             print("   [Tool Run - ChurnRisk] Fetching customer profile details (customer)")
-            portfolio = tools.get_portfolio_weight(customer_id)
+            portfolio = tools.get_customer(customer_id)
         
         if tool_selection.get("call_customer_account"):
             print("   [Tool Run - ChurnRisk] Fetching customer accounts (customer_account)")
@@ -237,20 +237,90 @@ def analyze_churn_node(state: Agent2State) -> Dict[str, Any]:
             "tx_str": tx_str
         })
 
-        # 검증 레이어 (Verification Layer)
-        grade = assessment.grade.strip()
+        return {"churn_grade": assessment.grade.strip(), "churn_reason": assessment.reason.strip()}
+    except Exception as e:
+        errors.append(f"analyze_churn failed: {str(e)}")
+        return {"errors": errors}
+
+def verify_churn_node(state: Agent2State) -> Dict[str, Any]:
+    errors = list(state.get("errors", []))
+    if errors:
+        return {}
+    
+    portfolio = state["portfolio"]
+    customer_transactions = state.get("customer_transactions", [])
+    churn_grade = state.get("churn_grade")
+    churn_reason = state.get("churn_reason")
+    
+    if not churn_grade or not churn_reason:
+        errors.append("verify_churn failed: Churn grade or reason missing in state.")
+        return {"errors": errors}
+        
+    try:
+        # LLM 기반 이탈 위험 등급 및 사유 정합성 검증 레이어 가동
+        verifier_system_prompt = (
+            "당신은 은행 본점의 수석 고객 행동 분석 검증관입니다.\n"
+            "제시된 [고객 자산 및 거래 팩트 데이터]와 1차 판정된 [이탈 등급 및 판단 사유]를 분석하여 비즈니스적 적절성을 평가하고, 모순이 있거나 미흡한 경우 등급과 사유를 교정해 주십시오.\n\n"
+            "### [비즈니스 판단 검증 규칙]\n"
+            "1. **타행 거액 유출 시 최소 '주의' 이상**: 최근 7일 내 타행으로 1,000만 원 이상 출금한 명확한 팩트가 있다면, 이탈 위험 등급은 최소 '주의' 이상이어야 합니다. ('양호'로 판정된 경우 '주의'로 격상)\n"
+            "2. **임계치 초과 유출 시 '위험'**: 최근 3개월 누적 타행 송금액이 순자산의 30% 이상이거나, 단일 1억 원 이상의 대형 출금이 있다면 이탈 위험 등급은 '위험'이어야 합니다. ('양호' 또는 '주의'로 판정된 경우 '위험'으로 격상)\n"
+            "3. **사유와 등급의 일치성**: 판정 사유(reason) 내용이 결정된 등급(grade)과 비즈니스 논리적으로 일치해야 하며 모순이 없어야 합니다.\n\n"
+            "### [출력 및 규격 제한 (엄격 적용)]\n"
+            "- 판정 사유(reason)는 반드시 **공백 포함 80자 이내의 한 문장(한국어 경어체)**이어야 합니다. (마크다운 기호 금지)\n"
+            "- 이탈 등급(grade)은 오직 '양호', '주의', '위험' 중 하나여야 합니다."
+        )
+        
+        # 최근 3개월 거래 내역 팩트 요약
+        tx_list = []
+        if customer_transactions:
+            for t in customer_transactions[:10]:
+                tx_list.append(
+                    f"- 금액: {t['amount']:,}원, 구분: {'출금' if t['ct_type']=='W' else '입금'}, 상대행: {t['opp_bank_name']}, 적요: {t['briefs']}"
+                )
+        tx_facts_str = "\n".join(tx_list) if tx_list else "최근 거래 내역 없음."
+        
+        net_worth = max(1, portfolio.get('net_worth', 1))
+        customer_facts = (
+            f"- 고객명: {portfolio.get('name')}\n"
+            f"- 순자산: {portfolio.get('net_worth', 0):,}원\n"
+            f"- 총자산: {portfolio.get('total_assets', 0):,}원\n"
+            f"- 최근 3개월 거래 팩트:\n{tx_facts_str}"
+        )
+        
+        user_content = (
+            f"### [고객 자산 및 거래 팩트 데이터]\n{customer_facts}\n"
+            f"### [1차 판정 결과]\n- 등급: {churn_grade}\n- 사유: {churn_reason}\n"
+        )
+        
+        llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=OPENAI_API_KEY)
+        structured_llm = llm.with_structured_output(ChurnAssessment2)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", verifier_system_prompt),
+            ("user", "{user_content}")
+        ])
+        chain = prompt | structured_llm
+        verified: ChurnAssessment2 = chain.invoke({"user_content": user_content})
+        
+        # 룰 기반 안전망 및 포맷 교정 레이어
+        grade = verified.grade.strip()
         grade_map = {"Low": "양호", "Medium": "주의", "High": "위험", "low": "양호", "medium": "주의", "high": "위험"}
         grade = grade_map.get(grade, grade)
         if grade not in ["양호", "주의", "위험"]:
             grade = "양호"
-
-        reason = assessment.reason.strip()
-        if len(reason) > 100:
-            reason = reason[:97] + "..."
-
+            
+        reason = verified.reason.strip()
+        # 마크다운 서식 소거
+        for char in ['*', '#', '_', '|', '`', '-']:
+            reason = reason.replace(char, '')
+            
+        if len(reason) > 80:
+            print(f"   [Verification Node - ChurnRisk] Warning: Reason length ({len(reason)}) exceeds 80 chars. Truncating.")
+            reason = reason[:77] + "..."
+            
+        print(f"   [Verification Node - ChurnRisk] Verification completed. Grade: {churn_grade} -> {grade}, Reason length: {len(reason)}")
         return {"churn_grade": grade, "churn_reason": reason}
     except Exception as e:
-        errors.append(f"analyze_churn failed: {str(e)}")
+        errors.append(f"verify_churn failed: {str(e)}")
         return {"errors": errors}
 
 def save_results_node(state: Agent2State) -> Dict[str, Any]:
@@ -279,13 +349,15 @@ workflow2.add_node("load_basic_profile", load_basic_profile_node)
 workflow2.add_node("determine_tools", determine_tools_node)
 workflow2.add_node("execute_selected_tools", execute_selected_tools_node)
 workflow2.add_node("analyze_churn", analyze_churn_node)
+workflow2.add_node("verify_churn", verify_churn_node)
 workflow2.add_node("save_results", save_results_node)
 
 workflow2.set_entry_point("load_basic_profile")
 workflow2.add_edge("load_basic_profile", "determine_tools")
 workflow2.add_edge("determine_tools", "execute_selected_tools")
 workflow2.add_edge("execute_selected_tools", "analyze_churn")
-workflow2.add_edge("analyze_churn", "save_results")
+workflow2.add_edge("analyze_churn", "verify_churn")
+workflow2.add_edge("verify_churn", "save_results")
 workflow2.add_edge("save_results", END)
 
 compiled_app2 = workflow2.compile()

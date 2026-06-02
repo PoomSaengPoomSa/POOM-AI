@@ -117,8 +117,8 @@ def execute_selected_tools_node(state: Agent3State) -> Dict[str, Any]:
 
     try:
         if tool_selection.get("call_customer"):
-            print("   [Tool Run - ProductMatcher] Running get_portfolio_weight() (customer)")
-            portfolio = tools.get_portfolio_weight(customer_id)
+            print("   [Tool Run - ProductMatcher] Running get_customer() (customer)")
+            portfolio = tools.get_customer(customer_id)
         if tool_selection.get("call_customer_account"):
             print("   [Tool Run - ProductMatcher] Running get_customer_accounts() (customer_account)")
             customer_accounts = tools.get_customer_accounts(customer_id)
@@ -152,7 +152,7 @@ def load_matching_data_node(state: Agent3State) -> Dict[str, Any]:
     try:
         if not portfolio:
             print("   [Tool Run - ProductMatcher] Portfolio not loaded. Fetching portfolio weights as fallback.")
-            portfolio = tools.get_portfolio_weight(customer_id)
+            portfolio = tools.get_customer(customer_id)
         
         main_products = tools.get_main_products()
         return {
@@ -288,33 +288,105 @@ def verify_matchings_node(state: Agent3State) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     if errors:
         return {}
+        
+    portfolio = state["portfolio"]
+    customer_products = state.get("customer_products", [])
     product_matchings = state.get("product_matchings", [])
     
-    cleaned_matchings = []
-    try:
-        for m in product_matchings:
-            reason = m.get("reason", "")
-            if reason:
-                # 1. 2인칭 -> 3인칭 교정 ("고객님" -> "고객")
-                cleaned = reason.replace("고객님", "고객")
-                
-                # 2. 마크다운 기호 제거
-                for char in ['*', '#', '_', '|', '`', '-']:
-                    cleaned = cleaned.replace(char, '')
-                    
-                # 3. 3문장 이내 제약조건 검증 및 교정
-                sentences = [s.strip() for s in cleaned.split('.') if s.strip()]
-                if len(sentences) > 3:
-                    print(f"   [Verification Node - ProductMatcher] Warning: Product {m['product_id']} reason has {len(sentences)} sentences. Truncating to 3 sentences.")
-                    cleaned = ". ".join(sentences[:3]) + "."
-                elif sentences:
-                    if not cleaned.endswith('.'):
-                        cleaned += "."
-                
-                m["reason"] = cleaned.strip()
-            cleaned_matchings.append(m)
+    if not product_matchings:
+        return {}
         
-        print(f"   [Verification Node - ProductMatcher] Cleaned and verified {len(cleaned_matchings)} product matchings.")
+    try:
+        # LLM 기반 상품 매칭 적합성 및 사유 정합성 검증 레이어 가동
+        verifier_system_prompt = (
+            "당신은 은행 본점의 금융 상품 추천 품질 심사역입니다.\n"
+            "제시된 [고객 정보] 및 [상품 가입 목록], 그리고 1차 도출된 [상품별 매칭 및 추천 사유 리스트]를 대조하여, 추천이 금융 비즈니스 가이드라인을 준수하는지 정밀 평가하고 필요시 등급 및 추천 멘트를 교정해 주십시오.\n\n"
+            "### [금융 비즈니스 검증 항목]\n"
+            "1. **투자 성향 초과 제한**: 고객 투자 성향(예: 안정형, 안정추구형)에 맞지 않는 초고위험 주식형 펀드/글로벌 펀드가 '적합(1)'으로 판정되었다면, 반드시 '부적합(0)'으로 변경하고 사유를 성향 불일치로 교정하십시오.\n"
+            "2. **중복 추천 배제**: 제공된 고객의 기가입 상품 목록에 존재하는 상품임에도 '보유 중(2)'이 아닌 '적합(1)' 등으로 판정되었다면, 무조건 '보유 중(2)'으로 판정하고 사유를 '고객이 이미 보유하고 있는 상품이므로 추천에서 배제합니다.'로 교정하십시오.\n"
+            "3. **판단과 사유의 일치성**: 판정 결과(적합=1, 부적합=0, 보유 중=2)와 추천/제외 사유 내용이 비즈니스 논리적으로 일관되어야 하며 서로 모순이 없어야 합니다.\n\n"
+            "### [출력 및 규격 제한 (엄격 적용)]\n"
+            "- 반드시 제공된 JSON 스키마 구조를 준수하여 출력하십시오. 부가적인 텍스트는 완전히 배제하십시오.\n"
+            "- 각 상품의 추천 사유는 마크다운 서식을 제거하고, **공백 포함 3문장 이내**의 한글 경어체(3인칭 호칭)여야 합니다."
+        )
+        
+        # 기가입 상품 목록 팩트 요약
+        held_list = []
+        if customer_products:
+            for ap in customer_products:
+                held_list.append(f"- 상품 ID: {ap['pd_id']}, 상품명: {ap['product_name']}")
+        held_products_str = "\n".join(held_list) if held_list else "보유 중인 상품 없음."
+        
+        customer_info_str = (
+            f"- 고객명: {portfolio.get('name')}\n"
+            f"- 투자성향: {portfolio.get('tendency')}\n"
+            f"- 등급: {portfolio.get('grade')}\n"
+            f"- 총자산: {portfolio.get('total_assets', 0):,}원\n"
+        )
+        
+        # 1차 판정 리스트 요약
+        eval_list = []
+        for pm in product_matchings:
+            eval_list.append(
+                f"- 상품 ID (pd_id): {pm['product_id']}\n"
+                f"  * 상품명: {pm['product_name']}\n"
+                f"  * 1차 판정 적합성 (is_suitable): {pm['is_suitable']}\n"
+                f"  * 1차 사유 (reason): {pm['reason']}"
+            )
+        eval_products_str = "\n".join(eval_list)
+        
+        user_content = (
+            f"### [고객 정보]\n{customer_info_str}\n"
+            f"### [상품 가입 목록]\n{held_products_str}\n"
+            f"### [상품별 매칭 및 추천 사유 리스트]\n{eval_products_str}\n"
+        )
+        
+        llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=OPENAI_API_KEY)
+        structured_llm = llm.with_structured_output(ProductMatchingList3)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", verifier_system_prompt),
+            ("user", "{user_content}")
+        ])
+        chain = prompt | structured_llm
+        verified: ProductMatchingList3 = chain.invoke({"user_content": user_content})
+        
+        # 룰 기반 안전망 및 포맷 교정 레이어
+        cleaned_matchings = []
+        held_product_ids = {ap["pd_id"] for ap in customer_products} if customer_products else set()
+        
+        for m in verified.matchings:
+            is_suitable = m.is_suitable
+            reason = m.reason.strip()
+            
+            # 중복 체크 룰베이스 강제 검증 (Safety Net)
+            if m.product_id in held_product_ids:
+                is_suitable = 2
+                reason = "고객이 이미 보유하고 있는 상품이므로 추천에서 배제합니다."
+            
+            # 인칭 교정 ("고객님" -> "고객")
+            cleaned = reason.replace("고객님", "고객")
+            
+            # 마크다운 기호 제거
+            for char in ['*', '#', '_', '|', '`', '-']:
+                cleaned = cleaned.replace(char, '')
+                
+            # 문장 수 제약조건 교정
+            sentences = [s.strip() for s in cleaned.split('.') if s.strip()]
+            if len(sentences) > 3:
+                print(f"   [Verification Node - ProductMatcher] Warning: Product {m.product_id} reason has {len(sentences)} sentences. Truncating.")
+                cleaned = ". ".join(sentences[:3]) + "."
+            elif sentences:
+                if not cleaned.endswith('.'):
+                    cleaned += "."
+            
+            cleaned_matchings.append({
+                "product_id": m.product_id,
+                "product_name": m.product_name,
+                "is_suitable": is_suitable,
+                "reason": cleaned.strip()
+            })
+            
+        print(f"   [Verification Node - ProductMatcher] Verified and cleaned {len(cleaned_matchings)} product matchings.")
         return {"product_matchings": cleaned_matchings}
     except Exception as e:
         errors.append(f"verify_matchings failed: {str(e)}")
