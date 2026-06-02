@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from typing import List
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -49,20 +50,21 @@ class MainAgent:
         self.sub2 = ChurnRiskAgent(model_name=model_name)
         self.sub3 = ProductMatchingAgent(model_name=model_name)
 
-    @traceable(name="MainAgent.run_for_customer", run_type="chain")
-    def run_for_customer(self, customer_id: int) -> dict:
+    @traceable(name="MainAgent.run_for_customer", run_type="chain", tags=["MainAgent"])
+    def run_for_customer(self, customer_id: int, selection_reasons: List[str] = None) -> dict:
         """
         특정 고객 ID에 대해 dynamic routing을 판단하여 선택적으로 서브 에이전트를 호출합니다.
         """
         results = {
             "c_id": customer_id,
+            "selection_reasons": selection_reasons or ["수동 지정"],
             "routing_reason": "",
             "sub1_called": False, "sub1_success": True,
             "sub2_called": False, "sub2_success": True,
             "sub3_called": False, "sub3_success": True
         }
 
-        logger.info(f" -> [Main Router] 고객 {customer_id}번 dynamic routing 분석 시작...")
+        logger.info(f" -> [Main Router] 고객 {customer_id}번 dynamic routing 분석 시작... (선정사유: {results['selection_reasons']})")
 
         # 1. 고객 현황 및 거래/상담 정보 수집
         try:
@@ -172,3 +174,69 @@ class MainAgent:
             logger.info(f"   -> [Sub Agent 3 SKIP] 라우터의 배제 판단으로 구동을 건너뜁니다.")
 
         return results
+
+    @traceable(name="MainAgent.run_batch", run_type="chain", tags=["MainAgent"])
+    def run_batch(self, specified_c_ids: list = None):
+        """
+        Orchestrate batch customer analysis (looping, targeting, and summary reporting).
+        """
+        logger.info("==========================================================")
+        logger.info("🤖 POOM-AI 고객분석 배치 에이전트 구동 개시")
+        logger.info("==========================================================")
+        
+        # 1단계: 분석 대상 c_id 리스트 및 선정 사유 수집
+        target_customers = []  # List of {"c_id": int, "reasons": List[str]}
+        
+        if specified_c_ids:
+            logger.info(f"[1단계] 지정된 수동 고객 분석 실행: {specified_c_ids}")
+            target_customers = [{"c_id": c_id, "reasons": ["수동 분석 대상 지정"]} for c_id in specified_c_ids]
+        else:
+            try:
+                target_customers = tools.fetch_batch_target_c_ids()
+                logger.info(f"[고객 선정 Node] 자동 스캔 완료. 총 {len(target_customers)}명의 분석 대상 선별:")
+                for tc in target_customers:
+                    logger.info(f"  - 고객 ID {tc['c_id']}: {', '.join(tc['reasons'])}")
+            except Exception as e:
+                logger.error(f"[고객 선정 Node] 대상 조회 실패 (Fallback 적용): {e}")
+                target_customers = []
+            
+        if not target_customers:
+            logger.info("[배치 중단] 오늘 분석을 수행할 대상 고객이 한 명도 존재하지 않습니다.")
+            logger.info("==========================================================")
+            return
+
+        # 2단계: 순차 및 독립적 분석 루프 실행
+        success_count = 0
+        failure_count = 0
+
+        for idx, tc in enumerate(target_customers, 1):
+            c_id = tc["c_id"]
+            reasons_str = ", ".join(tc["reasons"])
+            logger.info(f"\n({idx}/{len(target_customers)}) [고객 ID: {c_id}] 3대 핵심 분석(SubAgent 1, 2, 3) 실행")
+            logger.info(f" -> [선정 사유] {reasons_str}")
+            
+            results = self.run_for_customer(customer_id=c_id, selection_reasons=tc["reasons"])
+            
+            is_all_success = (
+                results["sub1_success"] and 
+                results["sub2_success"] and 
+                results["sub3_success"]
+            )
+            
+            if is_all_success:
+                success_count += 1
+                logger.info(f" -> [고객 ID: {c_id}] 모든 분석 및 DB 적재 완료 (SUCCESS)")
+            else:
+                failure_count += 1
+                logger.info(f" -> [고객 ID: {c_id}] 일부 분석 실패 감지 (FAILURE)")
+
+        logger.info("==========================================================")
+        logger.info("📊 배치 분석 완료 보고서")
+        logger.info("==========================================================")
+        logger.info(f"- 분석 기준일: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"- 총 분석 대상 고객: {len(target_customers)}명")
+        logger.info(f"- 분석 성공 고객: {success_count}명")
+        logger.info(f"- 분석 실패 고객: {failure_count}명")
+        logger.info("==========================================================")
+
+

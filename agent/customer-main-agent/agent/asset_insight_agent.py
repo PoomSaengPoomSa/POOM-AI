@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
+from langsmith import traceable
 
 # db 및 tool 임포트
 from db import root_env_path
@@ -34,9 +35,11 @@ def load_prompt(filename: str) -> str:
 
 # 1. Pydantic 스키마 정의
 class ToolSelection1(BaseModel):
-    call_search_today_news: bool = Field(description="오늘자 금융/경제 뉴스를 검색할지 여부. 고객이 적극투자형이거나 자산 비중에서 투자가 높은 경우 시장 정보 수집을 위해 참(True)으로 설정합니다.")
-    news_keyword: Optional[str] = Field(description="뉴스 검색 키워드 (예: 금리, 금, 부동산, 주식, 코스피 등), 필요 없으면 None")
-    call_get_trend_report: bool = Field(description="경제 지표 트렌드 보고서(금값, 기준금리, 부동산)를 가져올지 여부. 고객의 연금, 투자, 대출 자산이 존재하고 거시 경제 지표와의 매칭 진단이 유용할 때 참(True)으로 설정합니다.")
+    call_customer: bool = Field(description="고객 기본 프로필 및 자산 비중 정보(customer)를 조회할지 여부.")
+    call_customer_account: bool = Field(description="고객의 상세 계좌 유형 및 잔액 정보(customer_account)를 조회할지 여부. 유동성 자산 파악 및 정밀 리밸런싱 진단 시 유용.")
+    call_customer_product: bool = Field(description="고객이 보유한 예적금/금융상품 가입 목록(customer_product)을 조회할지 여부. 만기 예정 자금 재투자 조언 시 유용.")
+    call_customer_information: bool = Field(description="최근 1개월간 기록된 고객의 정성적 행동 특징 메모(customer_information)를 조회할지 여부.")
+    call_trend_llm_report: bool = Field(description="경제 지표 트렌드 보고서(trend_llm_report)를 조회할지 여부. 거시 지표 변화 영향 진단 시 유용.")
     reason: str = Field(description="해당 데이터 수집 도구들을 선택한 이유에 대한 에이전트의 구체적인 분석 및 판단 근거 (한 문장)")
 
 # 2. State 정의
@@ -44,7 +47,9 @@ class Agent1State(TypedDict):
     customer_id: int
     portfolio: Optional[Dict[str, Any]]
     tool_selection: Optional[Dict[str, Any]]
-    today_news: Optional[List[Dict[str, Any]]]
+    customer_accounts: Optional[List[Dict[str, Any]]]
+    customer_products: Optional[List[Dict[str, Any]]]
+    customer_features: Optional[List[Dict[str, Any]]]
     trend_reports: Optional[List[Dict[str, Any]]]
     asset_insight: Optional[str]
     errors: List[str]
@@ -105,23 +110,41 @@ def execute_selected_tools_node(state: Agent1State) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     if errors:
         return {}
+    customer_id = state["customer_id"]
     tool_selection = state["tool_selection"]
 
-    today_news = []
+    portfolio = state.get("portfolio")
+    customer_accounts = []
+    customer_products = []
+    customer_features = []
     trend_reports = []
 
     try:
-        if tool_selection.get("call_search_today_news"):
-            keyword = tool_selection.get("news_keyword")
-            print(f"   [Tool Run - AssetInsight] Running search_today_news(keyword='{keyword}')")
-            today_news = tools.search_today_news(keyword=keyword)
+        if tool_selection.get("call_customer"):
+            print("   [Tool Run - AssetInsight] Fetching customer profile details (customer)")
+            portfolio = tools.get_portfolio_weight(customer_id)
         
-        if tool_selection.get("call_get_trend_report"):
-            print("   [Tool Run - AssetInsight] Running get_trend_report()")
+        if tool_selection.get("call_customer_account"):
+            print("   [Tool Run - AssetInsight] Fetching customer accounts (customer_account)")
+            customer_accounts = tools.get_customer_accounts(customer_id)
+        
+        if tool_selection.get("call_customer_product"):
+            print("   [Tool Run - AssetInsight] Fetching customer active products (customer_product)")
+            customer_products = tools.get_customer_active_products(customer_id)
+        
+        if tool_selection.get("call_customer_information"):
+            print("   [Tool Run - AssetInsight] Fetching customer features (customer_information) - Last 1 Month")
+            customer_features = tools.get_customer_features(customer_id, months=1)
+        
+        if tool_selection.get("call_trend_llm_report"):
+            print("   [Tool Run - AssetInsight] Fetching trend reports (trend_llm_report)")
             trend_reports = tools.get_trend_report()
 
         return {
-            "today_news": today_news,
+            "portfolio": portfolio,
+            "customer_accounts": customer_accounts,
+            "customer_products": customer_products,
+            "customer_features": customer_features,
             "trend_reports": trend_reports
         }
     except Exception as e:
@@ -133,36 +156,58 @@ def analyze_assets_node(state: Agent1State) -> Dict[str, Any]:
     if errors:
         return {}
     portfolio = state["portfolio"]
-    today_news = state["today_news"]
-    trend_reports = state["trend_reports"]
+    customer_accounts = state.get("customer_accounts", [])
+    customer_products = state.get("customer_products", [])
+    customer_features = state.get("customer_features", [])
+    trend_reports = state.get("trend_reports", [])
+    tool_selection = state["tool_selection"]
 
-    portfolio_str = (
-        f"- 고객명: {portfolio['name']}\n"
-        f"- 투자성향: {portfolio['tendency']}\n"
-        f"- 등급: {portfolio['grade']}\n"
-        f"- 총자산: {portfolio['total_assets']:,}원\n"
-        f"  - 예금: {portfolio['deposit']:,}원 (순자산 대비 비중: {portfolio['deposit']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
-        f"  - 투자: {portfolio['investment']:,}원 (순자산 대비 비중: {portfolio['investment']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
-        f"  - 연금: {portfolio['pension']:,}원 (순자산 대비 비중: {portfolio['pension']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
-        f"  - 대출: {portfolio['loan']:,}원 (순자산 대비 부채비율: {portfolio['loan']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
-        f"  - 순자산: {portfolio['net_worth']:,}원\n"
-    )
-
-    if state["tool_selection"].get("call_search_today_news"):
-        news_list = []
-        for n in today_news[:5]:
-            news_list.append(f"[{n['source']}] {n['title']}\n{n['body'][:200]}...")
-        news_str = "\n\n".join(news_list) if news_list else "당일 수집된 주요 뉴스 없음."
+    if tool_selection.get("call_customer"):
+        portfolio_str = (
+            f"- 고객명: {portfolio['name']}\n"
+            f"- 투자성향: {portfolio['tendency']}\n"
+            f"- 등급: {portfolio['grade']}\n"
+            f"- 총자산: {portfolio['total_assets']:,}원\n"
+            f"  - 예금: {portfolio['deposit']:,}원 (순자산 대비 비중: {portfolio['deposit']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 투자: {portfolio['investment']:,}원 (순자산 대비 비중: {portfolio['investment']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 연금: {portfolio['pension']:,}원 (순자산 대비 비중: {portfolio['pension']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 대출: {portfolio['loan']:,}원 (순자산 대비 부채비율: {portfolio['loan']/max(1, portfolio['net_worth'])*100:.1f}%)\n"
+            f"  - 순자산: {portfolio['net_worth']:,}원\n"
+        )
     else:
-        news_str = "[참고] 에이전트의 수집 판단 제외: 해당 고객의 포트폴리오 성격상 당일 뉴스의 직접적인 필요성이 낮아 분석 데이터에서 제외되었습니다."
+        portfolio_str = "[참고] 에이전트의 수집 판단 제외: 고객 자산 프로필 조회가 스킵되었습니다."
 
-    if state["tool_selection"].get("call_get_trend_report"):
+    if tool_selection.get("call_customer_account"):
+        acc_list = []
+        for acc in customer_accounts:
+            acc_list.append(f"- 계좌번호: {acc['account_num']}, 유형: {acc['account_type']}, 잔액: {acc['balance']:,}원")
+        accounts_str = "\n".join(acc_list) if acc_list else "보유 중인 상세 계좌 정보 없음."
+    else:
+        accounts_str = "[참고] 에이전트의 수집 판단 제외: 상세 계좌 유형 및 잔액 정보가 제외되었습니다."
+
+    if tool_selection.get("call_customer_product"):
+        prod_list = []
+        for prod in customer_products:
+            prod_list.append(f"- 상품 ID: {prod['pd_id']}, 상품명: {prod['product_name']} (가입일: {prod['opening_date']}, 만기일: {prod['expiration_date']})")
+        products_str = "\n".join(prod_list) if prod_list else "보유 중인 금융 상품 목록 없음."
+    else:
+        products_str = "[참고] 에이전트의 수집 판단 제외: 가입 상품 및 만기 정보가 제외되었습니다."
+
+    if tool_selection.get("call_customer_information"):
+        feat_list = []
+        for feat in customer_features:
+            feat_list.append(f"[{feat['category']}] {feat['contents']} ({feat['created_date'].strftime('%Y-%m-%d')})")
+        features_str = "\n".join(feat_list) if feat_list else "최근 1개월간 기록된 고객 특징 없음."
+    else:
+        features_str = "[참고] 에이전트의 수집 판단 제외: 최근 1개월간의 고객 정성 특징 정보가 제외되었습니다."
+
+    if tool_selection.get("call_trend_llm_report"):
         reports_list = []
         for r in trend_reports:
             reports_list.append(f"[{r['type'].upper()} 트렌드 분석 보고서]\n{r['content']}")
         reports_str = "\n\n".join(reports_list) if reports_list else "활성화된 지표 트렌드 분석 보고서 없음."
     else:
-        reports_str = "[참고] 에이전트의 수집 판단 제외: 금값/금리/부동산 거시 지표 변화 영향도가 낮아 분석 데이터에서 제외되었습니다."
+        reports_str = "[참고] 에이전트의 수집 판단 제외: 금값/금리/부동산 거시 지표 변화 영향 분석이 제외되었습니다."
 
     try:
         system_prompt = load_prompt("asset_analysis_system.md")
@@ -176,13 +221,47 @@ def analyze_assets_node(state: Agent1State) -> Dict[str, Any]:
         chain = prompt | llm
         response = chain.invoke({
             "portfolio_str": portfolio_str,
-            "news_str": news_str,
+            "accounts_str": accounts_str,
+            "products_str": products_str,
+            "features_str": features_str,
             "reports_str": reports_str,
             "tendency": portfolio['tendency']
         })
         return {"asset_insight": response.content.strip()}
     except Exception as e:
         errors.append(f"analyze_assets failed: {str(e)}")
+        return {"errors": errors}
+
+def verify_insight_node(state: Agent1State) -> Dict[str, Any]:
+    errors = list(state.get("errors", []))
+    if errors:
+        return {}
+    insight = state.get("asset_insight")
+    if not insight:
+        errors.append("verify_insight failed: No asset_insight found in state.")
+        return {"errors": errors}
+    
+    try:
+        # 1. 2인칭("고객님") -> 3인칭("고객") 교정
+        cleaned = insight.replace("고객님", "고객")
+        
+        # 2. 마크다운 기호 제거
+        for char in ['*', '#', '_', '|', '`', '-']:
+            cleaned = cleaned.replace(char, '')
+            
+        # 3. 3문장 이내 제약조건 검증 및 교정
+        sentences = [s.strip() for s in cleaned.split('.') if s.strip()]
+        if len(sentences) > 3:
+            print(f"   [Verification Node] Warning: Insight has {len(sentences)} sentences. Truncating to 3 sentences.")
+            cleaned = ". ".join(sentences[:3]) + "."
+        elif sentences:
+            if not cleaned.endswith('.'):
+                cleaned += "."
+                
+        print(f"   [Verification Node] Verification completed. Original length: {len(insight)}, Cleaned length: {len(cleaned)}")
+        return {"asset_insight": cleaned.strip()}
+    except Exception as e:
+        errors.append(f"verify_insight failed: {str(e)}")
         return {"errors": errors}
 
 def save_results_node(state: Agent1State) -> Dict[str, Any]:
@@ -210,13 +289,15 @@ workflow1.add_node("load_basic_profile", load_basic_profile_node)
 workflow1.add_node("determine_tools", determine_tools_node)
 workflow1.add_node("execute_selected_tools", execute_selected_tools_node)
 workflow1.add_node("analyze_assets", analyze_assets_node)
+workflow1.add_node("verify_insight", verify_insight_node)
 workflow1.add_node("save_results", save_results_node)
 
 workflow1.set_entry_point("load_basic_profile")
 workflow1.add_edge("load_basic_profile", "determine_tools")
 workflow1.add_edge("determine_tools", "execute_selected_tools")
 workflow1.add_edge("execute_selected_tools", "analyze_assets")
-workflow1.add_edge("analyze_assets", "save_results")
+workflow1.add_edge("analyze_assets", "verify_insight")
+workflow1.add_edge("verify_insight", "save_results")
 workflow1.add_edge("save_results", END)
 
 compiled_app1 = workflow1.compile()
@@ -232,12 +313,15 @@ class AssetInsightAgent:
             DEFAULT_MODEL = model_name
         self.app = compiled_app1
 
+    @traceable(name="AssetInsightAgent", run_type="chain", tags=["AssetInsightAgent"])
     def run(self, customer_id: int) -> Dict[str, Any]:
         initial_state: Agent1State = {
             "customer_id": customer_id,
             "portfolio": None,
             "tool_selection": None,
-            "today_news": None,
+            "customer_accounts": None,
+            "customer_products": None,
+            "customer_features": None,
             "trend_reports": None,
             "asset_insight": None,
             "errors": []

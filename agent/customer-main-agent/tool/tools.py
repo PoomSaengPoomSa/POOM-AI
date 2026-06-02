@@ -1,5 +1,6 @@
 import datetime
 from db import get_db_cursor
+from langsmith import traceable
 
 def get_portfolio_weight(customer_id: int):
     """
@@ -14,59 +15,6 @@ def get_portfolio_weight(customer_id: int):
         cursor.execute(query, (customer_id,))
         result = cursor.fetchone()
         return result
-
-def search_today_news(date_str: str = None, keyword: str = None):
-    """
-    Search news archives. If no news is found for the specified date,
-    returns the 10 most recent news articles as fallback.
-    """
-    if not date_str:
-        date_str = datetime.date.today().strftime("%Y-%m-%d")
-
-    params = []
-    if keyword:
-        query = """
-            SELECT news_id, title, body, source, published_at
-            FROM trend_news
-            WHERE DATE(published_at) = %s AND (title LIKE %s OR body LIKE %s)
-            ORDER BY published_at DESC
-        """
-        params = [date_str, f"%{keyword}%", f"%{keyword}%"]
-    else:
-        query = """
-            SELECT news_id, title, body, source, published_at
-            FROM trend_news
-            WHERE DATE(published_at) = %s
-            ORDER BY published_at DESC
-        """
-        params = [date_str]
-
-    with get_db_cursor() as cursor:
-        cursor.execute(query, params)
-        results = cursor.fetchall()
-        
-        # Fallback to 10 most recent news if today's news is empty
-        if not results:
-            if keyword:
-                fallback_query = """
-                    SELECT news_id, title, body, source, published_at
-                    FROM trend_news
-                    WHERE title LIKE %s OR body LIKE %s
-                    ORDER BY published_at DESC
-                    LIMIT 10
-                """
-                cursor.execute(fallback_query, (f"%{keyword}%", f"%{keyword}%"))
-            else:
-                fallback_query = """
-                    SELECT news_id, title, body, source, published_at
-                    FROM trend_news
-                    ORDER BY published_at DESC
-                    LIMIT 10
-                """
-                cursor.execute(fallback_query)
-            results = cursor.fetchall()
-            
-        return results
 
 def get_trend_report():
     """
@@ -137,11 +85,11 @@ def get_large_external_transactions(customer_id: int, threshold_amount: float = 
 
 def save_asset_insight(customer_id: int, insight: str):
     """
-    Save the LLM generated asset profile analysis result to customer's llm_insight column.
+    Save the LLM generated asset profile analysis result to customer's llm_insight column and update analysis_time.
     """
     query = """
         UPDATE customer
-        SET llm_insight = %s
+        SET llm_insight = %s, analysis_time = NOW()
         WHERE c_id = %s
     """
     with get_db_cursor() as cursor:
@@ -188,18 +136,6 @@ def get_recent_consultation_report(customer_id: int):
             
             result["content"] = "\n\n".join(content_parts)
         return result
-
-def save_customer_feature(customer_id: int, category: str, contents: str):
-    """
-    Insert a new customer feature row into customer_information.
-    """
-    query = """
-        INSERT INTO customer_information (c_id, category, contents, created_date)
-        VALUES (%s, %s, %s, NOW())
-    """
-    with get_db_cursor() as cursor:
-        rows_affected = cursor.execute(query, (customer_id, category, contents))
-        return rows_affected > 0
 
 def get_main_products():
     """
@@ -274,3 +210,73 @@ def get_customer_accounts(customer_id: int):
         cursor.execute(query, (customer_id,))
         results = cursor.fetchall()
         return results
+
+def get_customer_transactions(customer_id: int, months: int = 3):
+    """
+    Retrieve all transactions for a specific customer in the last N months.
+    """
+    query = """
+        SELECT amount, opp_bank_name, briefs, ct_datetime, balance_after, ct_type
+        FROM customer_transaction
+        WHERE c_id = %s AND ct_datetime >= DATE_SUB(NOW(), INTERVAL %s MONTH)
+        ORDER BY ct_datetime DESC
+    """
+    with get_db_cursor() as cursor:
+        cursor.execute(query, (customer_id, months))
+        results = cursor.fetchall()
+        return results
+
+@traceable(name="fetch_batch_target_c_ids", run_type="tool")
+def fetch_batch_target_c_ids() -> list:
+    """
+    DB 단일 스캔 쿼리를 통해 분석이 시급한 VVIP 고객 ID 및 선정 사유 추출
+    1. 총자산 1억 이상 우량 고객 중 자산분석(llm_insight)이 없는 고객
+    2. 최근 7일 내 타행 고액 이출금(1천만 원 이상)이 발생한 고객 (W = Withdrawal)
+    3. 30일 이내 만기 예정 금융 상품을 보유한 고객
+    4. 오늘 상담 예약이 확정되어 내방하는 고객
+    """
+    query = """
+        -- (1) 예금 1억 이상 우량 고객 중 llm_insight가 비어있는 고객
+        SELECT c_id, '1억 이상 우량 고객(llm_insight 미비)' AS reason 
+        FROM customer 
+        WHERE total_assets >= 100000000 AND (llm_insight IS NULL OR llm_insight = '')
+        
+        UNION ALL
+        
+        -- (2) 최근 7일 내 타행 고액 이체 출금이 감지된 고객
+        SELECT DISTINCT c_id, '최근 7일 내 타행 거액 이출금(1천만 원 이상) 발생' AS reason 
+        FROM customer_transaction 
+        WHERE opp_bank_name != '품' AND ct_type = 'W' AND amount >= 10000000 
+          AND ct_datetime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+          
+        UNION ALL
+        
+        -- (3) 30일 이내에 도래하는 만기 예적금 상품 보유 고객
+        SELECT DISTINCT c_id, '30일 이내 만기 예정 금융 상품 보유' AS reason 
+        FROM customer_product 
+        WHERE expiration_date >= CURDATE() AND expiration_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        
+        UNION ALL
+        
+        -- (4) 오늘 상담 예약이 확정되어 내방하는 고객
+        SELECT DISTINCT c_id, '오늘 상담 예약 확정 내방 예정' AS reason 
+        FROM pb_schedule 
+        WHERE category = '상담' AND DATE(execution_date) = CURDATE() AND c_id IS NOT NULL
+    """
+    with get_db_cursor() as cursor:
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        customer_map = {}
+        for row in results:
+            c_id = row["c_id"]
+            reason = row["reason"]
+            if c_id not in customer_map:
+                customer_map[c_id] = []
+            if reason not in customer_map[c_id]:
+                customer_map[c_id].append(reason)
+                
+        # 리스트 딕셔너리 형태로 반환: [{"c_id": c_id, "reasons": reasons}, ...]
+        return [{"c_id": c_id, "reasons": reasons} for c_id, reasons in customer_map.items()]
+
+
