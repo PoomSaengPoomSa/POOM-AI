@@ -171,7 +171,14 @@ def generate_briefing_via_llm(customer_info: dict) -> str:
                 ],
                 temperature=0.3
             )
-            return completion.choices[0].message.content
+            briefing_text = completion.choices[0].message.content
+            # Post-processing: Ensure history lines are restored to their original form (with IDs)
+            for marker in ["- 이전 상담 히스토리 요약:", "이전 상담 히스토리 요약:"]:
+                if marker in briefing_text:
+                    parts = briefing_text.split(marker)
+                    briefing_text = parts[0].rstrip() + "\n" + marker + "\n" + history_text
+                    break
+            return briefing_text
         except Exception as e:
             logger.error(f"[LLM] OpenAI API 호출 오류 발생, Fallback 가동: {e}")
 
