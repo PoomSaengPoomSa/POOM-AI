@@ -5,6 +5,10 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 
 class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
+    # 시계열 분할 기준 (특정 시점 고정 분할)
+    TRAIN_END  = '202504'
+    TEST_START = '202505'
+
     def __init__(self, random_state=42):
         self.random_state = random_state
         
@@ -49,11 +53,11 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
         return self
         
     def predict(self, X):
-        # Weighted average of the Top 3 Champions:
-        # RidgeRegressor (60%), RandomForest (20%), CatBoost (20%)
-        # Sum of weights = 1.0. Completely excludes XGBoost, LightGBM, ExtraTrees, Lasso to prevent maintenance overhead.
+        # Weighted average of the Top 3 Champions aligned with performance ranking (without target leak):
+        # RidgeRegressor (10%), RandomForest (70%), CatBoost (20%)
+        # Sum of weights = 1.0. Correctly prioritizes RandomForest > CatBoost > RidgeRegressor.
         preds = []
-        weights = [0.60, 0.20, 0.20]
+        weights = [0.10, 0.70, 0.20]
         
         preds.append(self.ridge.predict(X) * weights[0])
         preds.append(self.rf.predict(X) * weights[1])

@@ -39,7 +39,7 @@ def run_test():
         selected_features = pickle.load(f)
         
     # Get preprocessed data
-    data = preprocess_data(test_months=24, vif_threshold=10.0)
+    data = preprocess_data(vif_threshold=20.0)
     if data is None:
         print("[Error] Preprocessing failed.")
         return

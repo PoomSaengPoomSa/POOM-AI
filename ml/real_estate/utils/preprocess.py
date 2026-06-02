@@ -78,7 +78,7 @@ def filter_features_by_vif(df, features, threshold=5.0, max_features=6):
     current_features = list(features)
     print("  [Aggressive VIF Feature Pruning for Production]")
 
-    protected_features = ["buyer_dominance_change", "kr_mortgage_rate_change", "house_price_idx_change"]
+    protected_features = ["buyer_dominance_change", "kr_mortgage_rate_change"]
 
     while True:
         if len(current_features) <= 4:
@@ -108,7 +108,7 @@ def filter_features_by_vif(df, features, threshold=5.0, max_features=6):
     return current_features
 
 
-def preprocess_data(test_months=24, vif_threshold=5.0):
+def preprocess_data(vif_threshold=5.0):
     # MySQL에서 직접 데이터 로드
     df = load_data_from_mysql()
     df = df.sort_values("date_ym").reset_index(drop=True)
@@ -167,14 +167,16 @@ def preprocess_data(test_months=24, vif_threshold=5.0):
         rolling_features.extend([f"{col}_ma3", f"{col}_ma6"])
 
     candidate_features = [
-        "house_price_idx_change", "kr_cpi_change", "kr_unemployment_change",
+        "kr_cpi_change", "kr_unemployment_change",
         "kr_base_rate_change", "kr_mortgage_rate_change", "kospi200_change",
         "apt_trade_count_change", "kr_m2_change", "buyer_dominance_change"
     ] + lagged_features + rolling_features + seasonality_features
 
-    # Train/Test split
-    train_df = df.iloc[:-test_months].copy()
-    test_df = df.iloc[-test_months:].copy()
+    # Train/Test split (Fixed Date Split)
+    from model import RealEstateEnsembleRegressor as cfg
+    df['date_ym'] = df['date_ym'].astype(str).str.strip()
+    train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
+    test_df  = df[df['date_ym'] >= cfg.TEST_START].copy()
 
     train_df[candidate_features] = train_df[candidate_features].ffill().bfill()
     test_df[candidate_features] = test_df[candidate_features].ffill().bfill()

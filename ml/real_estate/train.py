@@ -1,4 +1,5 @@
 import os
+import sys
 import pickle
 import mlflow
 import mlflow.sklearn
@@ -7,6 +8,12 @@ import pymysql
 from dotenv import load_dotenv, find_dotenv
 from utils.preprocess import preprocess_data
 from model import RealEstateEnsembleRegressor
+
+# Windows cp949 환경에서 MLflow 이모지 출력 시 UnicodeEncodeError 방지
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 
 GENERATE_REPORT = False  # 테스트 중엔 False, 운영 시 True로 변경
@@ -307,92 +314,69 @@ def run_train():
     with mlflow.start_run():
  
         # Preprocess
-        data = preprocess_data(test_months=24, vif_threshold=10.0)
+        data = preprocess_data(vif_threshold=20.0)
         if data is None:
             print("[Error] Preprocessing failed.")
             return
  
         X_train_sc = data['X_train_sc']
+        X_test_sc  = data['X_test_sc']
         y_train = data['y_train']
+        y_test  = data['y_test']
         selected_features = data['features']
         scaler = data['scaler']
  
         # MLflow - 전처리 파라미터 기록
-        mlflow.log_param("test_months", 24)
-        mlflow.log_param("vif_threshold", 10.0)
+        train_df = data['train_df']
+        test_df = data['test_df']
+        mlflow.log_param("train_start", train_df['date_ym'].min())
+        mlflow.log_param("train_end", train_df['date_ym'].max())
+        mlflow.log_param("test_start", test_df['date_ym'].min())
+        mlflow.log_param("test_end", test_df['date_ym'].max())
+        mlflow.log_param("vif_threshold", 20.0)
         mlflow.log_param("train_rows", len(X_train_sc))
+        mlflow.log_param("test_rows", len(X_test_sc))
         mlflow.log_param("num_features", len(selected_features))
         mlflow.log_param("random_state", 42)
  
-        # -----------------------------------------
-        # TimeSeriesSplit Cross-Validation (5 Splits)
-        # -----------------------------------------
-        from sklearn.model_selection import TimeSeriesSplit
         from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-        from sklearn.linear_model import LinearRegression
- 
-        print("\n" + "=" * 55)
-        print("  [TimeSeriesSplit Cross-Validation (5 Splits) on Train Set]")
-        print("=" * 55)
- 
-        tscv = TimeSeriesSplit(n_splits=5)
-        cv_metrics = {
-            "rmse": [], "r2": [], "mae": [], "mse": []
-        }
- 
-        for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_sc)):
-            X_tr, X_val = X_train_sc[train_idx], X_train_sc[val_idx]
-            y_tr, y_val = y_train.iloc[train_idx], y_train.iloc[val_idx]
- 
-            fold_model = LinearRegression().fit(X_tr, y_tr)
-            fold_pred = fold_model.predict(X_val)
- 
-            fold_r2 = r2_score(y_val, fold_pred)
-            fold_mae = mean_absolute_error(y_val, fold_pred)
-            fold_mse = mean_squared_error(y_val, fold_pred)
-            fold_rmse = np.sqrt(fold_mse)
- 
-            cv_metrics["r2"].append(fold_r2)
-            cv_metrics["mae"].append(fold_mae)
-            cv_metrics["mse"].append(fold_mse)
-            cv_metrics["rmse"].append(fold_rmse)
- 
-            # MLflow - 폴드별 성능 기록
-            mlflow.log_metric(f"fold_{fold+1}_r2", fold_r2)
-            mlflow.log_metric(f"fold_{fold+1}_mae", fold_mae)
-            mlflow.log_metric(f"fold_{fold+1}_mse", fold_mse)
-            mlflow.log_metric(f"fold_{fold+1}_rmse", fold_rmse)
- 
-            print(f"    * Fold {fold+1} | Train: {len(X_tr)} months, Val: {len(X_val)} months | Val R2: {fold_r2:.4f} | Val MAE: {fold_mae:.4f}% | Val MSE: {fold_mse:.6f} | Val RMSE: {fold_rmse:.4f}")
- 
-        print("-" * 55)
-        print("  --> Mean CV Metrics:")
-        mean_rmse = float(np.mean(cv_metrics["rmse"]))
-        mean_r2 = float(np.mean(cv_metrics["r2"]))
-        mean_mae = float(np.mean(cv_metrics["mae"]))
-        mean_mse = float(np.mean(cv_metrics["mse"]))
 
-        for k in cv_metrics.keys():
-            mean_val = np.mean(cv_metrics[k])
-            mlflow.log_metric(f"cv_mean_{k}", mean_val)
-            print(f"      * {k:<10}: {mean_val:.4f}")
-        print("=" * 55 + "\n")
- 
+        # -----------------------------------------
         # Train final ensemble model
+        # -----------------------------------------
         ensemble = RealEstateEnsembleRegressor(random_state=42)
         ensemble.fit(X_train_sc, y_train)
- 
-        # MLflow - 최종 모델 성능 기록
-        final_pred = ensemble.predict(X_train_sc)
-        final_r2  = r2_score(y_train, final_pred)
-        final_mae = mean_absolute_error(y_train, final_pred)
-        final_mse = mean_squared_error(y_train, final_pred)
-        final_rmse = np.sqrt(final_mse)
-        
-        mlflow.log_metric("train_r2", final_r2)
-        mlflow.log_metric("train_mae", final_mae)
-        mlflow.log_metric("train_mse", final_mse)
-        mlflow.log_metric("train_rmse", final_rmse)
+
+        # MLflow - Train set 성능 기록
+        train_pred = ensemble.predict(X_train_sc)
+        train_r2   = r2_score(y_train, train_pred)
+        train_mae  = mean_absolute_error(y_train, train_pred)
+        train_mse  = mean_squared_error(y_train, train_pred)
+        train_rmse = np.sqrt(train_mse)
+
+        mlflow.log_metric("train_r2", train_r2)
+        mlflow.log_metric("train_mae", train_mae)
+        mlflow.log_metric("train_mse", train_mse)
+        mlflow.log_metric("train_rmse", train_rmse)
+
+        # MLflow - Test set 성능 기록 (hold-out, gold/base_rate와 동일한 방식)
+        test_pred = ensemble.predict(X_test_sc)
+        test_r2   = r2_score(y_test, test_pred)
+        test_mae  = mean_absolute_error(y_test, test_pred)
+        test_mse  = mean_squared_error(y_test, test_pred)
+        test_rmse = np.sqrt(test_mse)
+
+        mlflow.log_metric("test_r2", test_r2)
+        mlflow.log_metric("test_mae", test_mae)
+        mlflow.log_metric("test_mse", test_mse)
+        mlflow.log_metric("test_rmse", test_rmse)
+
+        print("\n" + "=" * 55)
+        print("  Real Estate Ensemble - Train / Test Performance")
+        print("=" * 55)
+        print(f"   [Train]  R2: {train_r2:.4f} | MAE: {train_mae:.4f}% | RMSE: {train_rmse:.4f}")
+        print(f"   [Test ]  R2: {test_r2:.4f} | MAE: {test_mae:.4f}% | RMSE: {test_rmse:.4f}")
+        print("=" * 55 + "\n")
 
         # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
         latest_predicted_value = float(ensemble.predict(X_train_sc[[-1]])[0])
@@ -413,8 +397,8 @@ def run_train():
         except Exception:
             run_id_val = uuid.uuid4().hex[:32]
 
-        # 교차 검증 평균 성능(Mean CV Metrics)을 DB에 저장하여 신뢰할 수 있는 일반화 성능 지표를 표기
-        save_performance_to_mysql(rmse=mean_rmse, r2_score=mean_r2, mae=mean_mae, mse=mean_mse, run_id=run_id_val)
+        # 테스트셋 성능을 DB에 저장 (gold/base_rate와 동일한 방식)
+        save_performance_to_mysql(rmse=test_rmse, r2_score=test_r2, mae=test_mae, mse=test_mse, run_id=run_id_val)
         save_prediction_to_mysql(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
         generate_and_save_realestate_report(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
  
@@ -439,7 +423,10 @@ def run_train():
             f.write("\n".join(selected_features))
  
         # MLflow - 모델 저장 (MinIO artifact)
-        mlflow.sklearn.log_model(ensemble, "ensemble_model")
+        try:
+            mlflow.sklearn.log_model(ensemble, "ensemble_model")
+        except Exception as e:
+            print(f"[Warning] Failed to log model to MLflow S3 artifact: {e}")
  
         print("=" * 55)
         print("Training Pipeline Completed Successfully!")
