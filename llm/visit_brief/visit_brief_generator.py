@@ -235,7 +235,7 @@ def generate_briefing_via_llm(customer_info: dict) -> str:
 """
     return fallback_content
 
-def run_notification_generator(u_id: str, date_str: str):
+def run_notification_generator(u_id: str, date_str: str, db=None):
     """
     매일 아침 또는 조회 시점에 실행되어 
     1) 오늘 생일인 고객 알림 생성 (안부 연락)
@@ -251,7 +251,11 @@ def run_notification_generator(u_id: str, date_str: str):
     start_of_today = datetime.combine(target_date, datetime.min.time())
     end_of_today = datetime.combine(target_date, datetime.max.time())
     
-    with get_db() as db:
+    from contextlib import nullcontext
+    db_context = nullcontext(db) if db is not None else get_db()
+    should_commit = db is None
+    
+    with db_context as db:
         # PB 정보 검증
         pb = db.query(PbUser).filter(PbUser.u_id == u_id).first()
         if not pb:
@@ -369,6 +373,13 @@ def run_notification_generator(u_id: str, date_str: str):
                     ).first()
                     
                     if not dup:
+                        # 해당 고객의 동일한 만기 상품에 대한 이전 알림(D-3, D-4 등) 삭제
+                        db.query(Notification).filter(
+                            Notification.u_id == u_id,
+                            Notification.category == "만기 알림",
+                            Notification.title.like(f"%{c.name}%{p.name}%만기%")
+                        ).delete(synchronize_session=False)
+
                         remaining_days = (cp.expiration_date - target_date).days
                         d_day_str = f"D-{remaining_days}" if remaining_days > 0 else "금일 만기"
                         new_noti = Notification(
@@ -534,10 +545,15 @@ def run_notification_generator(u_id: str, date_str: str):
                     s_id=s.s_id,
                     c_id=c.c_id
                 )
-                db.add(new_briefing_noti)
-                logger.info(f"[방문 예정 브리핑 추가 완료] 고객: {c.name}, 일정: {visit_time}")
+                try:
+                    with db.begin_nested():
+                        db.add(new_briefing_noti)
+                    logger.info(f"[방문 예정 브리핑 추가 완료] 고객: {c.name}, 일정: {visit_time}")
+                except Exception as e:
+                    logger.warning(f"[VisitBrief] Duplicate notification insertion prevented (s_id: {s.s_id}): {e}")
                 
-        db.commit()
+        if should_commit:
+            db.commit()
         
     logger.info("=== [FINISHED] 알림/브리핑 생성 파이프라인 구동 완료 ===")
 
