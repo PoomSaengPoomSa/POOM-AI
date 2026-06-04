@@ -75,7 +75,7 @@ def GetRecentConsultingHistoryTool(u_id: str, c_id: int = None) -> str:
             
             # 리포트가 있는지 확인
             report = db.query(ConsultationReport).filter(ConsultationReport.cm_id == m.cm_id).first()
-            report_summary = f"\n  * 요약 리포트: {report.content}" if report else ""
+            report_summary = f"\n  * 요약 리포트: {report.summary or report.key_contents}" if report else ""
 
             output.append(
                 f"- **{cust_name}** 고객 상담 ({m.consult_date.strftime('%Y-%m-%d')}): {m.memo}{report_summary}"
@@ -117,7 +117,7 @@ def GetCustomerFeatureTool(c_id: int) -> str:
 def GetCustomerEventTool(u_id: str, date_str: str) -> str:
     """
     Get Customer Event Tool.
-    PB가 담당하는 고객들 중 분석 기준일(date_str, YYYY-MM-DD)로부터 30일 이내에 도래하는 '상품 만기 예정일', '고객 생일', '가족 기념일' 등의 주요 이벤트를 조회합니다.
+    PB가 담당하는 고객들 중 분석 기준일(date_str, YYYY-MM-DD)로부터 30일 이내에 도래하는 '상품 만기 예정일' 등의 주요 비즈니스 이벤트를 조회합니다. (생일/결혼기념일 등 관계 안부성 이벤트는 제외)
     """
     try:
         base_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -134,7 +134,7 @@ def GetCustomerEventTool(u_id: str, date_str: str) -> str:
 
         customers = db.query(Customer).filter(Customer.c_id.in_(c_ids)).all()
 
-        output = [f"### [{date_str} 기준 30일 이내 주요 이벤트 현황]"]
+        output = [f"### [{date_str} 기준 30일 이내 주요 상품 만기 예정 현황]"]
         events_found = False
 
         # 1. 상품 만기 조회 (오늘부터 30일 이내 만기)
@@ -157,53 +157,83 @@ def GetCustomerEventTool(u_id: str, date_str: str) -> str:
                     f"- **{cust_name}** 고객: 보유 상품 **'{cp.product.name}'** 만기 예정 (**만기일: {cp.expiration_date.strftime('%Y-%m-%d')}**)"
                 )
 
-        # 2. 생일 조회 (월/일 범위에 포함되는지 확인)
-        birthday_list = []
-        for c in customers:
-            if c.birthday:
-                # 당해 연도의 생일 날짜 구성
-                try:
-                    this_year_bday = c.birthday.replace(year=base_date.year)
-                except ValueError:
-                    # 2월 29일생 윤년 예외 처리
-                    this_year_bday = c.birthday.replace(year=base_date.year, day=28)
-                
-                # 30일 이내에 포함되는지 확인
-                if base_date <= this_year_bday <= end_period:
-                    birthday_list.append(c)
-
-        if birthday_list:
-            output.append("\n[2. 고객 생일 안내]")
-            for c in birthday_list:
-                events_found = True
-                output.append(f"- **{c.name}** 고객: **생일 도래 ({c.birthday.strftime('%m-%d')})** - 자산 규모: {c.total_assets/100000000:.1f}억")
-
-        # 3. 결혼기념일 등 중요 가족 이벤트 조회
-        relations = (
-            db.query(CustomerRelationship)
-            .filter(CustomerRelationship.c_id.in_(c_ids))
-            .all()
-        )
-        spouse_weddings = []
-        for r in relations:
-            if r.is_spouse and r.wedding_date:
-                try:
-                    this_year_wedding = r.wedding_date.replace(year=base_date.year)
-                except ValueError:
-                    this_year_wedding = r.wedding_date.replace(year=base_date.year, day=28)
-                
-                if base_date <= this_year_wedding <= end_period:
-                    spouse_weddings.append(r)
-
-        if spouse_weddings:
-            output.append("\n[3. 결혼기념일 및 가족 기념일 안내]")
-            for sw in spouse_weddings:
-                events_found = True
-                cust = next((c for c in customers if c.c_id == sw.c_id), None)
-                cust_name = cust.name if cust else f"고객ID:{sw.c_id}"
-                output.append(f"- **{cust_name}** 고객: **결혼기념일 도래 ({sw.wedding_date.strftime('%m-%d')})**")
-
         if not events_found:
-            return f"[{date_str} 기준] 30일 이내에 예정된 상품 만기, 생일, 결혼기념일 등 주요 고객 이벤트가 전혀 없습니다."
+            return f"[{date_str} 기준] 30일 이내에 예정된 상품 만기 이벤트가 전혀 없습니다."
 
+        return "\n".join(output)
+
+@tool
+def GetUnconsultedCustomersTool(u_id: str, date_str: str) -> str:
+    """
+    Get Unconsulted Customers Tool.
+    PB(u_id)가 담당하는 고객들 중 분석 기준일(date_str, YYYY-MM-DD)로부터 최근 60일 동안 상담 기록이 없거나 
+    상담 기록이 전혀 없는 고자산 VIP 고객 목록(최대 5명)을 총자산 순으로 조회합니다.
+    """
+    try:
+        base_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        base_date = datetime.now().date()
+
+    limit_date = base_date - timedelta(days=60)
+
+    with get_db_session() as db:
+        # PB의 담당 고객 ID 조회
+        c_ids = [r.c_id for r in db.query(InCharge).filter(InCharge.u_id == u_id).all()]
+        if not c_ids:
+            return "담당하는 고객이 존재하지 않습니다."
+
+        # 담당 고객들의 정보 조회
+        customers = db.query(Customer).filter(Customer.c_id.in_(c_ids)).all()
+        if not customers:
+            return "담당 고객 정보가 존재하지 않습니다."
+
+        unconsulted_list = []
+        for c in customers:
+            # 해당 고객의 최신 상담 기록 1건 조회
+            latest_memo = (
+                db.query(ConsultationMemo)
+                .filter(ConsultationMemo.c_id == c.c_id)
+                .order_by(ConsultationMemo.consult_date.desc())
+                .first()
+            )
+
+            # 60일 이전 상담이거나 상담이 아예 없는 경우 대상에 포함
+            if not latest_memo:
+                unconsulted_list.append({
+                    "customer": c,
+                    "last_consult_date": "상담 기록 없음"
+                })
+            elif latest_memo.consult_date.date() < limit_date:
+                unconsulted_list.append({
+                    "customer": c,
+                    "last_consult_date": latest_memo.consult_date.strftime("%Y-%m-%d")
+                })
+
+        if not unconsulted_list:
+            return "최근 60일 이내에 모든 담당 고객과 상담을 마쳤습니다. 밀착 관리가 잘 유지되고 있습니다."
+
+        # 정렬 기준:
+        # 1차: 상담 기록이 아예 없는 경우(가장 우선순위가 높음)와 상담 기록이 오래된 순서
+        # 2차: 총자산이 높은 순서
+        # 이를 위해 커스텀 정렬 키 적용
+        def sorting_key(x):
+            # 상담일이 없는 경우 매우 과거의 날짜(1970년)로 지정하여 정렬 우선순위 극대화
+            if x["last_consult_date"] == "상담 기록 없음":
+                consult_val = datetime(1970, 1, 1).date()
+            else:
+                consult_val = datetime.strptime(x["last_consult_date"], "%Y-%m-%d").date()
+            # 1차 올림차순(consult_val), 2차 내림차순(total_assets)
+            return (consult_val, -(x["customer"].total_assets or 0))
+
+        unconsulted_list.sort(key=sorting_key)
+        # 최대 15명까지 넉넉하게 context 제공
+        top_unconsulted = unconsulted_list[:15]
+
+        output = ["### [장기 미상담 고자산 고객 리스트 (60일 이상 미접촉, 최대 15명)]"]
+        for idx, item in enumerate(top_unconsulted, 1):
+            c = item["customer"]
+            assets = f"{c.total_assets / 100000000:.1f}억" if c.total_assets else "0원"
+            output.append(
+                f"{idx}. **{c.name}** (c_id: {c.c_id}, {c.grade} 등급, 자산: {assets}) - **최종 상담일: {item['last_consult_date']}**"
+            )
         return "\n".join(output)

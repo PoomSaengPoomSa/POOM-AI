@@ -7,7 +7,8 @@ from tools.calendar_tool import GetCalendarScheduleTool
 from tools.customer_tool import (
     GetCustomerRiskTool,
     GetRecentConsultingHistoryTool,
-    GetCustomerEventTool
+    GetCustomerEventTool,
+    GetUnconsultedCustomersTool
 )
 from tools.notification_tool import GetNotificationTool
 from tools.kpi_tool import GetKPIStatusTool
@@ -47,9 +48,15 @@ def state_analyzer_node(state: AgentState) -> Dict[str, Any]:
         "date_str": target_date
     })
 
-    # 5. 최근 상담 이력 수집
+    # 5. 최근 상담 이력 조회
     histories_data = GetRecentConsultingHistoryTool.invoke({
         "u_id": u_id
+    })
+
+    # 5.5. 장기 미상담 고객 조회
+    unconsulted_data = GetUnconsultedCustomersTool.invoke({
+        "u_id": u_id,
+        "date_str": target_date
     })
 
     # 6. 기존 생성 알림 리스트 수집
@@ -88,7 +95,7 @@ def state_analyzer_node(state: AgentState) -> Dict[str, Any]:
                     )
                 ignored_info_str = "\n".join(ignored_list)
             
-            # (B) 이미 미래 또는 현재 일정이 수립되어 상담 예약 완료된 고객 리스트
+            # (B) 이미 미래 또는 오늘 예약되어 일정 확보 완료된 고객 리스트
             active_schedules = (
                 db.query(Schedule)
                 .filter(Schedule.u_id == u_id)
@@ -97,16 +104,30 @@ def state_analyzer_node(state: AgentState) -> Dict[str, Any]:
             )
             scheduled_c_ids = list(set([s.c_id for s in active_schedules]))
             
+            # (C) 최근 7일 이내에 상담 메모(ConsultationMemo)가 등록된 고객도 중복 배제에 추가
+            from app.models.consultation import ConsultationMemo
+            from datetime import timedelta
+            seven_days_ago = midnight_bound - timedelta(days=7)
+            recent_consultations = (
+                db.query(ConsultationMemo)
+                .filter(ConsultationMemo.u_id == u_id)
+                .filter(ConsultationMemo.consult_date >= seven_days_ago)
+                .all()
+            )
+            recent_c_ids = [m.c_id for m in recent_consultations]
+            scheduled_c_ids = list(set(scheduled_c_ids + recent_c_ids))
+            
     except Exception as e:
         logger.warning(f"[StateAnalyzer] 과거 무시 이력 및 기예약 고객 조회 실패: {e}")
 
-    # 종합 컨텍스트 완성
+    # 컨텍스트 조립
     context_data = {
         "calendar": calendar_data,
         "kpi": kpi_data,
         "risks": risks_data,
         "events": events_data,
         "histories": histories_data,
+        "unconsulted_customers": unconsulted_data,
         "notifications": notifications_data,
         "ignored_history": ignored_info_str,
         "scheduled_customers": scheduled_c_ids
