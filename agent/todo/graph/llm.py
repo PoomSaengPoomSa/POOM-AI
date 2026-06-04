@@ -114,43 +114,70 @@ class HeuristicFallbackLLM:
             if "14:00" in user_content:
                 t3 = "17:00:00"
 
-            fallback_results = [
+            # user_content에서 calendar 데이터 파싱하여 겹치는 시간 추출
+            busy_hours = []
+            try:
+                # user_content에서 시간(HH:MM) 포맷 패턴 모두 조회
+                time_matches = re.findall(r"(\d{2}):(\d{2})", user_content)
+                for match in time_matches:
+                    busy_hours.append(int(match[0]))
+            except Exception:
+                pass
+
+            available_hours = [h for h in [9, 10, 11, 12, 13, 14, 15, 16, 17, 18] if h not in busy_hours]
+            if not available_hours:
+                available_hours = [9, 10, 11, 13, 14, 15, 16, 17, 18]
+
+            all_candidates = [
                 {
-                    "title": "[만기] 우량 고객 정기예금 재가입 상담 제안",
-                    "memo": "예금 만기 15일 전. AUM 사수를 위한 고액 예금 재유치 상담 추천.",
+                    "title": "[만기] 우량 고객 정기예금 만기 분석 및 재가입 안내 준비",
+                    "memo": "예금 만기 15일 전. AUM 사수를 위한 고액 예금 재유치 상담 설명안 준비.",
                     "category": "상담 일정 제안",
-                    "execution_date": f"{target_date} {t1}",
                     "c_id": p_id
                 },
                 {
-                    "title": "[생일] 생일 맞이 축하 감사 연락",
-                    "memo": "오늘 생일 도래. 모바일 커피 쿠폰 발송 및 감사 안부 연락.",
-                    "category": "안부 연락 제안",
-                    "execution_date": f"{target_date} {t2}",
+                    "title": "[분석] 신규 자산 포트폴리오 다각화 제안서 작성",
+                    "memo": "금리 변동성에 대응하기 위한 신규 펀드 및 채권 자산 리밸런싱 포트폴리오 분석.",
+                    "category": "신규 상품 분석",
                     "c_id": p_id
                 },
                 {
-                    "title": "[기념일] 결혼기념일 기념 축하 안부 연락",
-                    "memo": "결혼기념일 3일 전. VIP 밀착 관리용 축하 기프티콘 및 전화 안부.",
-                    "category": "안부 연락 제안",
-                    "execution_date": f"{target_date} {t3}",
+                    "title": "[상담] 우량 고객 투자성향 만료 현황 사전 검토",
+                    "memo": "투자성향 만료 임박 고객 대상 성향 재진단 및 안정성 향상 자산 다각화 제안 준비.",
+                    "category": "상담 일정 제안",
                     "c_id": s_id
                 },
                 {
-                    "title": "[포폴] 글로벌 채권 포트폴리오 리밸런싱 제안",
-                    "memo": "고객 투자 성향 맞춤형 글로벌 하이일드 채권 상품 설명안 전달.",
+                    "title": "[포폴] 글로벌 채권 포트폴리오 리밸런싱 상품 연구",
+                    "memo": "고객 투자 성향 맞춤형 글로벌 하이일드 채권 상품 설명안 전달 대비 연구.",
                     "category": "신규 상품 분석",
-                    "execution_date": f"{target_date} {t4}",
                     "c_id": p_id
                 },
                 {
                     "title": "[KPI] IRP 신규 고객 유치 상담 제안",
                     "memo": "연말 정산 세액공제 극대화를 위한 IRP 신규 개설 마케팅 상담.",
                     "category": "KPI 기반",
-                    "execution_date": f"{target_date} {t5}",
                     "c_id": s_id
                 }
             ]
+
+            fallback_results = []
+            limit = min(5, len(available_hours))
+            if limit < 2:
+                limit = 2
+                if len(available_hours) < 2:
+                    available_hours = [9, 11]
+
+            for idx in range(limit):
+                hour = available_hours[idx]
+                cand = all_candidates[idx % len(all_candidates)]
+                fallback_results.append({
+                    "title": cand["title"],
+                    "memo": cand["memo"],
+                    "category": cand["category"],
+                    "execution_date": f"{target_date} {hour:02d}:00:00",
+                    "c_id": cand["c_id"]
+                })
             return FallbackMessage(json.dumps(fallback_results, ensure_ascii=False))
 
         # 2. Planner Prompt 감지 시 Tool 실행 계획 수립
