@@ -1,10 +1,15 @@
 import os
+import sys
 import numpy as np
 import pandas as pd
 import pymysql
 from dotenv import load_dotenv, find_dotenv
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
+
+# utils/ 하위에서 직접 실행 시 상위 디렉토리를 path에 추가
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 
 def load_data_from_mysql():
@@ -211,8 +216,84 @@ def preprocess_data(vif_threshold=5.0):
         'scaler': scaler
     }
 
+    # -----------------------------------------
+    # DB 적재: ml_realestate_preprocessed (gold/base_rate와 동일한 방식)
+    # -----------------------------------------
+    all_feature_cols = ['house_price_idx', 'house_price_idx_change'] + candidate_features
+    final_order = ['date_ym'] + all_feature_cols + [TARGET]
+
+    # 저장할 컬럼만 추려서 결측치 처리
+    export_df = df[final_order].copy()
+    numeric_cols = export_df.select_dtypes(include=[np.number]).columns
+    export_df[numeric_cols] = export_df[numeric_cols].round(6)
+
+    print("\n[Database Export] Loading preprocessed real estate data into MySQL...")
+
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("   [Warning] Missing DB configuration. Skipping database export.")
+    else:
+        try:
+            connection = pymysql.connect(
+                host=DB_HOST,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME,
+                port=int(DB_PORT),
+                charset='utf8mb4',
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            print("   DB Connection successful!")
+
+            with connection.cursor() as cursor:
+                table_name = "ml_realestate_preprocessed"
+
+                # DROP & CREATE (항상 최신 피처 구조로 갱신)
+                cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+
+                columns_def = ["date_ym VARCHAR(10) PRIMARY KEY"]
+                for col in all_feature_cols:
+                    columns_def.append(f"`{col}` DECIMAL(15, 6)")
+                columns_def.append(f"`{TARGET}` DECIMAL(15, 6)")
+
+                create_sql = f"CREATE TABLE {table_name} ({', '.join(columns_def)}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+                cursor.execute(create_sql)
+                print(f"   Created table '{table_name}' with {len(all_feature_cols)} feature columns.")
+
+                # Batch INSERT
+                db_data = export_df.replace({np.nan: None}).values.tolist()
+                placeholders = ", ".join(["%s"] * len(final_order))
+                col_names_quoted = ", ".join([f"`{c}`" for c in final_order])
+                insert_sql = f"INSERT INTO {table_name} ({col_names_quoted}) VALUES ({placeholders})"
+
+                cursor.executemany(insert_sql, db_data)
+                connection.commit()
+                print(f"   Successfully uploaded {len(db_data)} rows into '{table_name}'!")
+
+            connection.close()
+        except Exception as e:
+            print(f"   [Error] MySQL Export failed: {e}")
+
     return preprocessed_data
 
 
+
 if __name__ == '__main__':
-    preprocess_data()
+    print("=" * 55)
+    print("[Preprocess] 부동산 전처리 검증 실행")
+    print("=" * 55)
+    result = preprocess_data(vif_threshold=20.0)
+    if result:
+        print(f"\n[Preprocess] 완료!")
+        print(f"  Train : {result['train_df']['date_ym'].min()} ~ {result['train_df']['date_ym'].max()} ({len(result['X_train_sc'])} rows)")
+        print(f"  Test  : {result['test_df']['date_ym'].min()} ~ {result['test_df']['date_ym'].max()} ({len(result['X_test_sc'])} rows)")
+        print(f"  Features ({len(result['features'])}): {result['features']}")
+    else:
+        print("[Preprocess] 전처리 실패")
+

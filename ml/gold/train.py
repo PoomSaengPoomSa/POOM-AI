@@ -343,10 +343,10 @@ def train_model():
  
         cfg = GoldModel
  
-        # 2. Split Data Chronologically
-        split_idx = int(len(df) * cfg.TRAIN_RATIO)
-        train_df = df.iloc[:split_idx].copy()
-        test_df  = df.iloc[split_idx:].copy()
+        # 2. Split Data Chronologically (Fixed Date Split)
+        df['loaded_date'] = df['loaded_date'].astype(str).str.strip()
+        train_df = df[df['loaded_date'] <= cfg.TRAIN_END].copy()
+        test_df  = df[df['loaded_date'] >= cfg.TEST_START].copy()
  
         drop_cols = [c for c in cfg.DROP_COLS if c in df.columns]
         X_train = train_df.drop(columns=drop_cols)
@@ -453,7 +453,10 @@ def train_model():
         joblib.dump(selected_features, os.path.join(models_dir, 'gold_features.pkl'))
  
         # MLflow - 모델 저장 (MinIO artifact)
-        mlflow.sklearn.log_model(classifier, "classifier")
+        try:
+            mlflow.sklearn.log_model(classifier, "classifier")
+        except Exception as e:
+            print(f"[Warning] Failed to log model to MLflow S3 artifact: {e}")
  
         print(f"\n{'='*55}")
         print("Models and resources saved successfully!")

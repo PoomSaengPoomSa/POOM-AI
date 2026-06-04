@@ -1,8 +1,7 @@
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
 from catboost import CatBoostRegressor
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import Ridge
 
 class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
     # 시계열 분할 기준 (특정 시점 고정 분할)
@@ -12,13 +11,16 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
     def __init__(self, random_state=42):
         self.random_state = random_state
         
-        # We select only the Top 3 Champion Models to ensure production-grade simplicity and zero latency overhead
-        # 1. Tuned Linear Model (L2 Regularized Ridge)
-        self.ridge = Ridge(
-            alpha=1.0
+        # We select only the Top 3 Champion Models from the tournament to maximize performance:
+        # 1. Supreme Bagging Model (ExtraTrees)
+        self.et = ExtraTreesRegressor(
+            n_estimators=150,
+            max_depth=4,
+            random_state=random_state,
+            n_jobs=-1
         )
         
-        # 2. Robust Bagging Model
+        # 2. Robust Bagging Model (RandomForest)
         self.rf = RandomForestRegressor(
             n_estimators=150,
             max_depth=4,
@@ -28,7 +30,7 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
             n_jobs=-1
         )
         
-        # 3. Robust Symmetric Boosting Model
+        # 3. Robust Symmetric Boosting Model (CatBoost)
         self.cat = CatBoostRegressor(
             iterations=150,
             learning_rate=0.03,
@@ -39,13 +41,13 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
         )
         
         self.models = {
-            'RidgeRegressor': self.ridge,
+            'ExtraTrees': self.et,
             'RandomForest': self.rf,
             'CatBoost': self.cat
         }
         
     def fit(self, X, y):
-        print("\n  [Production-Grade 3-Model Ensemble Training]")
+        print("\n  [Production-Grade 3-Model Ensemble Training (Tree Dream Team)]")
         for name, model in self.models.items():
             print(f"    - Training {name}...")
             model.fit(X, y)
@@ -53,13 +55,13 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
         return self
         
     def predict(self, X):
-        # Weighted average of the Top 3 Champions aligned with performance ranking (without target leak):
-        # RidgeRegressor (10%), RandomForest (70%), CatBoost (20%)
-        # Sum of weights = 1.0. Correctly prioritizes RandomForest > CatBoost > RidgeRegressor.
+        # Weighted average of the Top 3 Champions:
+        # ExtraTrees (40%), RandomForest (40%), CatBoost (20%)
+        # Sum of weights = 1.0.
         preds = []
-        weights = [0.10, 0.70, 0.20]
+        weights = [0.40, 0.40, 0.20]
         
-        preds.append(self.ridge.predict(X) * weights[0])
+        preds.append(self.et.predict(X) * weights[0])
         preds.append(self.rf.predict(X) * weights[1])
         preds.append(self.cat.predict(X) * weights[2])
         

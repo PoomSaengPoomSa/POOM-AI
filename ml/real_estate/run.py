@@ -55,13 +55,14 @@ def main():
 
     pipeline_scripts = [
         'utils/get_data.py',
+        'utils/preprocess.py',
         'train.py',
         'test.py',
         'explain.py',
         'interpret_xai.py'
     ]
     
-    print("[PIPELINE] 부동산 ML 파이프라인 연속 실행 시작 (Collect -> Train -> Test -> Explain -> Interpret)\n")
+    print("[PIPELINE] 부동산 ML 파이프라인 연속 실행 시작 (Collect -> Preprocess -> Train -> Test -> Explain -> Interpret)\n")
     
     for script in pipeline_scripts:
         run_script(script)

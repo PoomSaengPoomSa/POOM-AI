@@ -98,7 +98,7 @@ def generate_and_save_realestate_report(predicted_value, predicted_index, run_id
         )
         try:
             with connection.cursor() as cursor:
-                sql = "SELECT house_price_idx FROM ml_realestate_preprocessed ORDER BY date_ym DESC LIMIT 1"
+                sql = "SELECT house_price_idx FROM ml_realestate_raw ORDER BY date_ym DESC LIMIT 1"
                 cursor.execute(sql)
                 res = cursor.fetchone()
                 if res:
@@ -290,7 +290,7 @@ def get_latest_actual_realestate_index():
         )
         try:
             with connection.cursor() as cursor:
-                sql = "SELECT house_price_idx FROM ml_realestate_preprocessed ORDER BY date_ym DESC LIMIT 1"
+                sql = "SELECT house_price_idx FROM ml_realestate_raw ORDER BY date_ym DESC LIMIT 1"
                 cursor.execute(sql)
                 res = cursor.fetchone()
                 if res:
