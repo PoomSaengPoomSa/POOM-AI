@@ -2,9 +2,9 @@ import subprocess
 import sys
 import os
 
-def run_script(script_name):
+def run_script(script_name, forward_args=[]):
     print(f"\n{'='*60}")
-    print(f"[START] 실행 시작: {script_name}")
+    print(f"[START] 실행 시작: {script_name} {' '.join(forward_args)}")
     print(f"{'='*60}")
     
     # 현재 Python 인터프리터를 사용하여 실행 (콘솔 인코딩 문제 방지를 위해 -X utf8 옵션 추가)
@@ -13,7 +13,7 @@ def run_script(script_name):
     
     try:
         process = subprocess.Popen(
-            [python_executable, "-X", "utf8", script_path],
+            [python_executable, "-X", "utf8", script_path] + forward_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -37,6 +37,15 @@ def run_script(script_name):
         sys.exit(1)
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode')
+    args = parser.parse_known_args()[0]
+    
+    forward_args = []
+    if args.valid:
+        forward_args = ['--valid']
+        
     # 파이프라인 순서
     pipeline_scripts = [
         'utils/get_data.py',
@@ -47,10 +56,13 @@ def main():
         'interpret_xai.py'
     ]
     
-    print("[PIPELINE] 전체 ML 파이프라인 연속 실행 시작 (Train -> Test -> Explain)\n")
+    print(f"[PIPELINE] 전체 ML 파이프라인 연속 실행 시작 (Valid Mode: {args.valid})\n")
     
     for script in pipeline_scripts:
-        run_script(script)
+        if script in ['train.py', 'test.py', 'explain.py']:
+            run_script(script, forward_args)
+        else:
+            run_script(script, [])
         
     print(f"\n{'='*60}")
     print("[SUCCESS] 파이프라인 전체 프로세스가 성공적으로 완료되었습니다!")

@@ -12,7 +12,7 @@ import warnings
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
  
-GENERATE_REPORT = False  # 테스트 중엔 False, 운영 시 True로 변경
+GENERATE_REPORT = True  # 테스트 중엔 False, 운영 시 True로 변경
 
  
  
@@ -210,8 +210,7 @@ def generate_and_save_baserate_report(prob_hike, prob_freeze, prob_cut, run_id):
         print("[Warning] Generated LLM report is empty.")
         return
         
-    # 3. Save to trend_llm_report table (Cumulative Insert with 16-character UUID)
-    import uuid
+    # 3. Save to trend_llm_report table (Cumulative Insert with Auto-increment ID)
     try:
         connection = pymysql.connect(
             host=DB_HOST,
@@ -225,23 +224,19 @@ def generate_and_save_baserate_report(prob_hike, prob_freeze, prob_cut, run_id):
             with connection.cursor() as cursor:
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS trend_llm_report (
-                    report_id VARCHAR(50) NOT NULL PRIMARY KEY,
+                    report_id INT AUTO_INCREMENT PRIMARY KEY,
                     type VARCHAR(50) NOT NULL,
-                    model_name VARCHAR(50) NOT NULL,
-                    language VARCHAR(10) NOT NULL,
                     content TEXT NOT NULL,
-                    status VARCHAR(20) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    data_source VARCHAR(255)
+                    summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
                 
-                report_id = f"rpt_{str(uuid.uuid4()).replace('-', '')[:16]}"
                 sql = """
-                INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, data_source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO trend_llm_report (type, content, summary)
+                VALUES (%s, %s, %s)
                 """
-                cursor.execute(sql, (report_id, "base_rate", "gpt-4o", "ko", content, "done", "FRED, ECOS, BOK"))
+                cursor.execute(sql, ("base_rate", content, content))
             connection.commit()
             print("[DB] Successfully generated and saved Base Rate LLM report into MySQL trend_llm_report table.")
         finally:
@@ -306,7 +301,7 @@ def save_performance_to_mysql(accuracy, precision, recall, f1_score, run_id=None
         print(f"[Error] Failed to save performance metrics to MySQL: {e}")
  
  
-def train_model():
+def train_model(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     load_dotenv(find_dotenv())
 
@@ -325,34 +320,43 @@ def train_model():
  
         cfg = InterestRateEnsembleModel
  
-        train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
-        test_df  = df[df['date_ym'] >= cfg.TEST_START].copy()
+        if valid_mode:
+            # Validation 모드: train으로 학습, valid로 검증, test 사용 안 함
+            train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
+            eval_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+            eval_name = "Validation"
+        else:
+            # Testing 모드: train+valid로 학습, test로 검증
+            train_df = df[df['date_ym'] <= cfg.VALID_END].copy()
+            eval_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
+            eval_name = "Test"
  
         drop_cols = [c for c in cfg.DROP_COLS if c in df.columns]
  
         X_train = train_df.drop(columns=drop_cols)
-        X_test  = test_df.drop(columns=drop_cols)
+        X_eval  = eval_df.drop(columns=drop_cols)
  
         y_train_label  = train_df['label_encoded']
-        y_test_label   = test_df['label_encoded']
- 
+        y_eval_label   = eval_df['label_encoded']
+  
         selected_features = list(X_train.columns)
- 
+  
         print(f"\n{'='*55}")
-        print("Data Split Results")
+        print(f"Data Split Results ({eval_name} Mode)")
         print(f"{'='*55}")
         print(f"   Train: {train_df['date_ym'].min()} ~ {train_df['date_ym'].max()}  ({len(X_train)} months)")
-        print(f"   Test : {test_df['date_ym'].min()} ~ {test_df['date_ym'].max()}  ({len(X_test)} months)")
+        print(f"   Eval : {eval_df['date_ym'].min()} ~ {eval_df['date_ym'].max()}  ({len(X_eval)} months)")
         print(f"   Total trained features: {X_train.shape[1]}")
         print(f"   Features list: {selected_features}")
- 
+  
         # MLflow - 데이터 정보 기록
+        mlflow.log_param("valid_mode", str(valid_mode))
         mlflow.log_param("train_start", train_df['date_ym'].min())
         mlflow.log_param("train_end", train_df['date_ym'].max())
-        mlflow.log_param("test_start", test_df['date_ym'].min())
-        mlflow.log_param("test_end", test_df['date_ym'].max())
+        mlflow.log_param("eval_start", eval_df['date_ym'].min())
+        mlflow.log_param("eval_end", eval_df['date_ym'].max())
         mlflow.log_param("train_rows", len(X_train))
-        mlflow.log_param("test_rows", len(X_test))
+        mlflow.log_param("eval_rows", len(X_eval))
         mlflow.log_param("num_features", X_train.shape[1])
  
         # Train Label Distribution
@@ -387,21 +391,22 @@ def train_model():
         classifier.fit(X_train, y_train_label, sample_weight=sample_weights)
  
         # MLflow - 성능 지표 기록
-        y_pred = classifier.predict(X_test)
-        accuracy = accuracy_score(y_test_label, y_pred)
-        f1 = f1_score(y_test_label, y_pred, average='weighted')
-        precision = precision_score(y_test_label, y_pred, average='weighted', zero_division=0)
-        recall = recall_score(y_test_label, y_pred, average='weighted', zero_division=0)
- 
-        mlflow.log_metric("accuracy", accuracy)
-        mlflow.log_metric("f1", f1)
-        mlflow.log_metric("precision", precision)
-        mlflow.log_metric("recall", recall)
-        print(f"\n   [Test 성능]")
-        print(f"     Accuracy  : {accuracy:.4f}")
-        print(f"     F1 Score  : {f1:.4f}")
-        print(f"     Precision : {precision:.4f}")
-        print(f"     Recall    : {recall:.4f}")
+        y_eval_pred = classifier.predict(X_eval)
+        eval_accuracy = accuracy_score(y_eval_label, y_eval_pred)
+        eval_f1 = f1_score(y_eval_label, y_eval_pred, average='weighted')
+        eval_precision = precision_score(y_eval_label, y_eval_pred, average='weighted', zero_division=0)
+        eval_recall = recall_score(y_eval_label, y_eval_pred, average='weighted', zero_division=0)
+
+        mlflow.log_metric("accuracy", eval_accuracy)
+        mlflow.log_metric("f1", eval_f1)
+        mlflow.log_metric("precision", eval_precision)
+        mlflow.log_metric("recall", eval_recall)
+
+        print(f"\n   [{eval_name} 성능]")
+        print(f"     Accuracy  : {eval_accuracy:.4f}")
+        print(f"     F1 Score  : {eval_f1:.4f}")
+        print(f"     Precision : {eval_precision:.4f}")
+        print(f"     Recall    : {eval_recall:.4f}")
 
         # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
         X_latest = df.drop(columns=drop_cols).iloc[[-1]]
@@ -418,9 +423,9 @@ def train_model():
             run_id_val = uuid.uuid4().hex[:32]
 
         # 꼬임 버그를 완벽하게 제거하기 위해 명시적 키워드 인자로 호출
-        save_performance_to_mysql(accuracy=accuracy, precision=precision, recall=recall, f1_score=f1, run_id=run_id_val)
+        save_performance_to_mysql(accuracy=eval_accuracy, precision=eval_precision, recall=eval_recall, f1_score=eval_f1, run_id=run_id_val)
         save_prediction_to_mysql(prob_hike=prob_hike, prob_freeze=prob_freeze, prob_cut=prob_cut, run_id=run_id_val)
-        generate_and_save_baserate_report(prob_hike=prob_hike, prob_freeze=prob_freeze, prob_cut=prob_cut, run_id=run_id_val)
+        # generate_and_save_baserate_report(prob_hike=prob_hike, prob_freeze=prob_freeze, prob_cut=prob_cut, run_id=run_id_val)
  
         # -----------------------------------------
         # 3. Save Models
@@ -446,4 +451,9 @@ def train_model():
  
  
 if __name__ == '__main__':
-    train_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode: train on train, validate on valid, do not use test.')
+    args = parser.parse_known_args()[0]
+    
+    train_model(valid_mode=args.valid)
