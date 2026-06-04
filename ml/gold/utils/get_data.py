@@ -1,12 +1,11 @@
 import os
 import pymysql
 import pandas as pd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 def collect_all():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env_path = os.path.abspath(os.path.join(base_dir, '../../.env'))
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(find_dotenv())
 
     # Load DB credentials
     DB_USER = os.getenv('DB_USER')
