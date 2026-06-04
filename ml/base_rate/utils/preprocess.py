@@ -66,6 +66,11 @@ def preprocess():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     data_dir = os.path.join(base_dir, 'data')
 
+    import sys
+    sys.path.insert(0, base_dir)
+    from model import InterestRateEnsembleModel
+    cfg = InterestRateEnsembleModel
+
     # -----------------------------------------
     # 1. Load Raw Data (MySQL Database)
     # -----------------------------------------
@@ -78,13 +83,14 @@ def preprocess():
     df = df.sort_values('date_ym').reset_index(drop=True)
 
     # -----------------------------------------
-    # 2. Impute Missing Values (IterativeImputer MICE)
+    # 2. Impute Missing Values (IterativeImputer MICE) - Train set fit only to prevent leakage
     # -----------------------------------------
     print("\nImputing missing values using IterativeImputer (MICE)...")
     before_na = df.isna().sum().sum()
 
+    # GDP is quarterly. Using linear interpolation leaks future quarter GDP. Use ffill() instead.
     if 'kr_gdp_index' in df.columns:
-        df['kr_gdp_index'] = df['kr_gdp_index'].interpolate(method='linear')
+        df['kr_gdp_index'] = df['kr_gdp_index'].ffill().bfill()
 
     # Extract numeric columns for imputation
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -96,7 +102,11 @@ def preprocess():
         from sklearn.linear_model import BayesianRidge
         
         imputer = IterativeImputer(estimator=BayesianRidge(), max_iter=10, random_state=42)
-        df[numeric_cols] = imputer.fit_transform(df[numeric_cols])
+        
+        # Fit on training data only to avoid leaking test set statistics
+        train_mask = df['date_ym'] <= cfg.TRAIN_END
+        imputer.fit(df.loc[train_mask, numeric_cols])
+        df[numeric_cols] = imputer.transform(df[numeric_cols])
 
     # Fill remaining NaNs for categorical/identifier columns if any
     df = df.ffill().bfill()
@@ -232,7 +242,7 @@ def preprocess():
     first_valid = 12  # 12-month lag due to YoY pct change
     # Exclude the last row as its target variable is shifted to NaN
     df = df.iloc[first_valid:-1].reset_index(drop=True)
-    df = df.ffill().bfill()
+    df = df.dropna().reset_index(drop=True)
 
     # -----------------------------------------
     # 7. Offloaded Dimensionality Reduction & Feature Selection (Data Leakage Free)
@@ -305,7 +315,8 @@ def preprocess():
     print(f"   Save Path   : {save_path}")
     print(f"   Final Size  : {df.shape[0]} rows x {df.shape[1]} columns")
     print(f"   Train Period: {df[df['date_ym'] <= cfg.TRAIN_END].shape[0]} months (~{cfg.TRAIN_END})")
-    print(f"   Test Period : {df[df['date_ym'] >= cfg.TEST_START].shape[0]} months ({cfg.TEST_START}~)")
+    print(f"   Valid Period: {df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].shape[0]} months ({cfg.VALID_START}~{cfg.VALID_END})")
+    print(f"   Test Period : {df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].shape[0]} months ({cfg.TEST_START}~{cfg.TEST_END})")
     print(f"   Total Feature Columns: {len(df.columns)}")
 
     # -----------------------------------------

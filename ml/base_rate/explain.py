@@ -64,7 +64,7 @@ def load_data_from_mysql():
     return df
 
 
-def explain_model():
+def explain_model(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir  = os.path.join(base_dir, 'models')
     results_dir = os.path.join(base_dir, 'results')
@@ -79,15 +79,14 @@ def explain_model():
     df = load_data_from_mysql()
     df['date_ym'] = df['date_ym'].astype(str).str.strip()
 
-
-
     cfg = InterestRateEnsembleModel
 
     feature_names = joblib.load(os.path.join(models_dir, 'feature_names.pkl'))
 
-
-
-    test_df  = df[df['date_ym'] >= cfg.TEST_START].copy()
+    if valid_mode:
+        test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+    else:
+        test_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
 
     X_test  = test_df[feature_names]
 
@@ -438,5 +437,8 @@ def explain_model():
 
 
 if __name__ == '__main__':
-
-    explain_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode')
+    args = parser.parse_known_args()[0]
+    explain_model(valid_mode=args.valid)

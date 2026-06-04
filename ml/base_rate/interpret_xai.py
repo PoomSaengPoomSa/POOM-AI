@@ -2,8 +2,53 @@ import os
 import base64
 import glob  # 동적으로 파일을 찾기 위해 추가
 import pandas as pd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
+
+def save_report_to_mysql(content, summary, report_type):
+    import pymysql
+    
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB credentials. Skipping DB save for LLM report.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trend_llm_report (
+                    report_id INT AUTO_INCREMENT PRIMARY KEY,
+                    type VARCHAR(50) NOT NULL,
+                    content TEXT NOT NULL,
+                    summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                sql = """
+                INSERT INTO trend_llm_report (type, content, summary)
+                VALUES (%s, %s, %s)
+                """
+                cursor.execute(sql, (report_type, content, summary))
+            connection.commit()
+            print(f"[DB] Successfully saved {report_type} XAI report and summary to MySQL trend_llm_report table.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save {report_type} XAI report to MySQL: {e}")
 
 def encode_image(image_path):
     if not os.path.exists(image_path):
@@ -13,7 +58,7 @@ def encode_image(image_path):
 
 def interpret_xai():
     # 1. 환경변수 및 기본 경로 설정
-    load_dotenv()
+    load_dotenv(find_dotenv())
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("[ERROR] 오류: .env 파일에 OPENAI_API_KEY가 설정되지 않았습니다.")
@@ -71,14 +116,25 @@ def interpret_xai():
     
     client = OpenAI(api_key=api_key)
 
-    # 시각화 이미지 없이 CSV 데이터만 종합적으로 참조하도록 지시
-    user_content_text = (
-        "다음은 SHAP 분석 결과에서 추출된 데이터입니다 (이미지 없이 텍스트로 제공됨):\n" 
-        + "[1. 상위 15개 중요도 표 및 클래스별 중요도]\n"
-        + csv_text 
-        + misclass_text
-        + beeswarm_text
-        + "\n\n위 데이터들을 종합적으로 참고하여 금리 예측 모델이 이 피처들을 어떻게 활용하는지 분석해주세요."
+    # Load user_xai_prompt.md dynamically
+    user_xai_prompt_path = os.path.join(base_dir, 'prompt', 'user_xai_prompt.md')
+    if os.path.exists(user_xai_prompt_path):
+        with open(user_xai_prompt_path, 'r', encoding='utf-8') as f:
+            user_xai_template = f.read()
+    else:
+        user_xai_template = (
+            "다음은 SHAP 분석 결과에서 추출된 데이터입니다 (이미지 없이 텍스트로 제공됨):\n" 
+            + "[1. 상위 15개 중요도 표 및 클래스별 중요도]\n"
+            + "{csv_text}" 
+            + "{misclass_text}"
+            + "{beeswarm_text}"
+            + "\n\n위 데이터들을 종합적으로 참고하여 금리 예측 모델이 이 피처들을 어떻게 활용하는지 분석해주세요."
+        )
+
+    user_content_text = user_xai_template.format(
+        csv_text=csv_text,
+        misclass_text=misclass_text,
+        beeswarm_text=beeswarm_text
     )
 
     messages = [
@@ -104,6 +160,92 @@ def interpret_xai():
             f.write(result_text)
 
         print(f"\n[OK] 분석 완료! 파일이 저장되었습니다: {output_path}")
+
+        # 5. Fetch predictions and actual rates from MySQL for summary report
+        prob_hike = 0.0
+        prob_freeze = 0.0
+        prob_cut = 0.0
+        latest_br_val = None
+        
+        DB_USER = os.getenv('DB_USER')
+        DB_PASSWORD = os.getenv('DB_PASSWORD')
+        DB_HOST = os.getenv('DB_HOST')
+        DB_PORT = os.getenv('DB_PORT')
+        DB_NAME = os.getenv('DB_NAME')
+        
+        if all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+            import pymysql
+            try:
+                connection = pymysql.connect(
+                    host=DB_HOST,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    database=DB_NAME,
+                    port=int(DB_PORT),
+                    charset='utf8mb4'
+                )
+                try:
+                    with connection.cursor() as cursor:
+                        # 1. Fetch latest predictions
+                        cursor.execute("SELECT prob_hike, prob_freeze, prob_cut FROM baserate_predictions ORDER BY created_at DESC LIMIT 1")
+                        res_pred = cursor.fetchone()
+                        if res_pred:
+                            prob_hike = float(res_pred[0])
+                            prob_freeze = float(res_pred[1])
+                            prob_cut = float(res_pred[2])
+                            
+                        # 2. Fetch latest actual base rate
+                        cursor.execute("SELECT value FROM economic_indicator_history WHERE type = 'base_rate' ORDER BY recorded_at DESC LIMIT 1")
+                        res_val = cursor.fetchone()
+                        if res_val:
+                            latest_br_val = float(res_val[0])
+                finally:
+                    connection.close()
+            except Exception as e:
+                print(f"[Warning] Failed to fetch base rate values from DB: {e}")
+
+        # 6. Load summary_prompt.md dynamically and generate summary report
+        summary_prompt_path = os.path.join(base_dir, 'prompt', 'summary_prompt.md')
+        if os.path.exists(summary_prompt_path):
+            with open(summary_prompt_path, 'r', encoding='utf-8') as f:
+                summary_template = f.read()
+        else:
+            summary_template = (
+                "한국은행 기준금리 AI 예측 모델 분석 결과:\n"
+                "- 금리 인하 확률: {prob_cut_pct:.1f}%\n"
+                "- 금리 동결 확률: {prob_freeze_pct:.1f}%\n"
+                "- 금리 인상 확률: {prob_hike_pct:.1f}%\n"
+                "- 최신 실제 기준금리: {latest_br_val_str}\n"
+                "위 예측 데이터를 바탕으로 한국어 리포트를 마크다운 형식으로 작성해주세요."
+            )
+            
+        prob_cut_pct = prob_cut * 100.0 if prob_cut <= 1.0 else prob_cut
+        prob_freeze_pct = prob_freeze * 100.0 if prob_freeze <= 1.0 else prob_freeze
+        prob_hike_pct = prob_hike * 100.0 if prob_hike <= 1.0 else prob_hike
+        latest_br_val_str = f"{latest_br_val:.2f}%" if latest_br_val is not None else "데이터 없음"
+        
+        prompt = summary_template.format(
+            prob_cut_pct=prob_cut_pct,
+            prob_freeze_pct=prob_freeze_pct,
+            prob_hike_pct=prob_hike_pct,
+            latest_br_val_str=latest_br_val_str
+        )
+        
+        summary_messages = [
+            {"role": "system", "content": "You are a professional economic analyst. Always respond in Korean markdown format. Keep it concise, engaging, and professional."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        print(f"[XAI] OpenAI GPT-4o 로 기준금리 요약 보고서 생성 요청 중...")
+        response_sum = client.chat.completions.create(
+            model="gpt-4o",
+            messages=summary_messages,
+            temperature=0.7
+        )
+        summary_text = response_sum.choices[0].message.content
+        
+        # 7. Save both reports to MySQL DB
+        save_report_to_mysql(result_text, summary_text, "base_rate")
 
     except Exception as e:
         print(f"[ERROR] OpenAI API 호출 중 오류 발생: {e}")

@@ -18,8 +18,11 @@ class InterestRateEnsembleModel:
     DROP_COLS = ['date_ym', 'kr_base_rate_change', 'label', 'label_encoded']
 
     # 시계열 분할 기준
-    TRAIN_END  = '202504'   # Train: ~2024.04
-    TEST_START = '202505'   # Test:  2025.05~
+    TRAIN_END    = '202403'   # Train: ~ 2024.03 (나머지 기간)
+    VALID_START  = '202404'   # Valid: 2024.04 ~ 2025.03 (1년)
+    VALID_END    = '202503'
+    TEST_START   = '202504'   # Test:  2025.04 ~ 2026.03 (2026 1분기까지 1년)
+    TEST_END     = '202603'
 
     def __init__(self, random_state=42):
         self.random_state = random_state
