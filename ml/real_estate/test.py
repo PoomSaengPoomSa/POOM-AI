@@ -24,17 +24,14 @@ def run_test():
     
     # Check if models exist
     model_path = os.path.join(models_dir, 'ensemble_model.pkl')
-    scaler_path = os.path.join(models_dir, 'scaler.pkl')
     features_path = os.path.join(models_dir, 'selected_features.pkl')
     
-    if not (os.path.exists(model_path) and os.path.exists(scaler_path) and os.path.exists(features_path)):
-        print("[Error] Trained models/scalers not found. Run train.py first.")
+    if not (os.path.exists(model_path) and os.path.exists(features_path)):
+        print("[Error] Trained models not found. Run train.py first.")
         return
         
     with open(model_path, 'rb') as f:
         ensemble = pickle.load(f)
-    with open(scaler_path, 'rb') as f:
-        scaler = pickle.load(f)
     with open(features_path, 'rb') as f:
         selected_features = pickle.load(f)
         

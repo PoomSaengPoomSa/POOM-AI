@@ -8,6 +8,89 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from utils.preprocess import preprocess_data
 
+def save_contributions_to_mysql(features, shap_values):
+    import pymysql
+    from dotenv import load_dotenv, find_dotenv
+    import numpy as np
+    
+    # 1. Calculate absolute mean SHAP values for each feature
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    
+    # 2. Map to base variable names (removing _change, _lag1, _ma3, seasonality, etc.)
+    base_mapping = {
+        "house_price_idx": "house_price_idx",
+        "kr_cpi": "kr_cpi",
+        "kr_unemployment": "kr_unemployment",
+        "kr_base_rate": "kr_base_rate",
+        "kr_mortgage_rate": "kr_mortgage_rate",
+        "kospi200": "kospi200",
+        "apt_trade_count": "apt_trade_count",
+        "kr_m2": "kr_m2",
+        "buyer_dominance": "buyer_dominance"
+    }
+    
+    grouped_shap = {}
+    for feat, val in zip(features, mean_abs_shap):
+        # find matching base variable
+        base_var = None
+        for k in base_mapping.keys():
+            if feat.startswith(k):
+                base_var = base_mapping[k]
+                break
+        
+        if not base_var:
+            base_var = feat # fallback
+            
+        grouped_shap[base_var] = grouped_shap.get(base_var, 0.0) + val
+        
+    # 3. Normalize weights so they sum to 1.0 (or to 100 in backend)
+    total_shap = sum(grouped_shap.values())
+    if total_shap > 0:
+        contributions = {k: v / total_shap for k, v in grouped_shap.items()}
+    else:
+        contributions = {k: 1.0 / len(grouped_shap) for k in grouped_shap.keys()}
+        
+    # 4. Insert into database
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping SHAP contributions DB save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                # Delete old contributions for real_estate
+                cursor.execute("DELETE FROM economic_indicator_contribution WHERE type = 'real_estate'")
+                
+                # Insert new contributions
+                sql = """
+                INSERT INTO economic_indicator_contribution (type, variable, weight)
+                VALUES (%s, %s, %s)
+                """
+                for var, weight in contributions.items():
+                    cursor.execute(sql, ("real_estate", var, float(weight)))
+            connection.commit()
+            print(f"[DB] Successfully saved real_estate SHAP contributions to MySQL ({len(contributions)} features).")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save SHAP contributions to MySQL: {e}")
+
+
 def run_explain():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir = os.path.join(base_dir, 'models')
@@ -141,7 +224,10 @@ def run_explain():
         shap_df['date_ym'] = test_df['date_ym'].values
         shap_df.to_csv(os.path.join(results_dir, 'shap_values.csv'), index=False, encoding='utf-8-sig')
         
+        # Save dynamic contributions to MySQL DB for real-time dashboard binding
+        save_contributions_to_mysql(selected_features, mean_shap_values)
+        
     print("\nSHAP XAI Analysis Completed Successfully!")
-
+ 
 if __name__ == '__main__':
     run_explain()

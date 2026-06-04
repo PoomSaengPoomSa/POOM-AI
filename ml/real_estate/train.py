@@ -16,7 +16,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 
-GENERATE_REPORT = False  # 테스트 중엔 False, 운영 시 True로 변경
+GENERATE_REPORT = True  # 테스트 중엔 False, 운영 시 True로 변경
 
 
 def save_prediction_to_mysql(predicted_value, predicted_index, run_id):
@@ -197,10 +197,11 @@ def generate_and_save_realestate_report(predicted_value, predicted_index, run_id
                 )
                 """)
                 
-                report_id = f"rpt_{str(uuid.uuid4()).replace('-', '')[:16]}"
+                # 16-character UUID prefix as report ID
+                report_id = f"rpt_{uuid.uuid4().hex[:16]}"
                 sql = """
-                INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, data_source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, created_at, data_source)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
                 """
                 cursor.execute(sql, (report_id, "real_estate", "gpt-4o", "ko", content, "done", "ECOS, K-RealEstate"))
             connection.commit()
@@ -290,7 +291,7 @@ def get_latest_actual_realestate_index():
         )
         try:
             with connection.cursor() as cursor:
-                sql = "SELECT house_price_idx FROM ml_realestate_raw ORDER BY date_ym DESC LIMIT 1"
+                sql = "SELECT house_price_idx FROM ml_realestate_preprocessed ORDER BY date_ym DESC LIMIT 1"
                 cursor.execute(sql)
                 res = cursor.fetchone()
                 if res:
@@ -379,7 +380,9 @@ def run_train():
         print("=" * 55 + "\n")
 
         # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
-        latest_predicted_value = float(ensemble.predict(X_train_sc[[-1]])[0])
+        # 스케일러를 제거했으므로 원본 스케일 최신 피처 값을 그대로 사용하여 예측함
+        X_latest = data['df'][selected_features].iloc[[-1]]
+        latest_predicted_value = float(ensemble.predict(X_latest.values)[0])
         
         # 이번달 실제 가격지수 조회 및 실질 예측 지수 환산
         re_today = get_latest_actual_realestate_index()
@@ -407,13 +410,10 @@ def run_train():
         os.makedirs(models_dir, exist_ok=True)
  
         model_path    = os.path.join(models_dir, 'ensemble_model.pkl')
-        scaler_path   = os.path.join(models_dir, 'scaler.pkl')
         features_path = os.path.join(models_dir, 'selected_features.pkl')
  
         with open(model_path, 'wb') as f:
             pickle.dump(ensemble, f)
-        with open(scaler_path, 'wb') as f:
-            pickle.dump(scaler, f)
         with open(features_path, 'wb') as f:
             pickle.dump(selected_features, f)
  
@@ -432,7 +432,6 @@ def run_train():
         print("Training Pipeline Completed Successfully!")
         print("=" * 55)
         print(f"  Saved Model   : {model_path}")
-        print(f"  Saved Scaler  : {scaler_path}")
         print(f"  Saved Features: {features_path} and .txt")
         print(f"  Features size : {len(selected_features)}")
  

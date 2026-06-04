@@ -116,14 +116,13 @@ def filter_features_by_vif(df, features, threshold=5.0, max_features=6):
 def preprocess_data(vif_threshold=5.0):
     # MySQL에서 직접 데이터 로드
     df = load_data_from_mysql()
+    df = df.dropna(subset=["house_price_idx"]).copy()
     df = df.sort_values("date_ym").reset_index(drop=True)
 
     # 1. Target creation
     df["next_house_price_idx"] = df["house_price_idx"].shift(-1)
     TARGET = "next_change_rate"
     df[TARGET] = (df["next_house_price_idx"] - df["house_price_idx"]) / df["house_price_idx"] * 100
-
-    df = df.dropna(subset=[TARGET]).copy()
 
     # 2. Impute missing values
     raw_features = [
@@ -133,49 +132,46 @@ def preprocess_data(vif_threshold=5.0):
     ]
     df[raw_features] = df[raw_features].ffill().bfill()
 
-    # Feature Engineering
-    df["house_price_idx_change"] = df["house_price_idx"].pct_change() * 100
-    df["kr_cpi_change"] = df["kr_cpi"].pct_change() * 100
-    df["kr_unemployment_change"] = df["kr_unemployment"].diff()
-    df["kr_base_rate_change"] = df["kr_base_rate"].diff()
-    df["kr_mortgage_rate_change"] = df["kr_mortgage_rate"].diff()
-    df["kospi200_change"] = df["kospi200"].pct_change() * 100
-    df["apt_trade_count_change"] = df["apt_trade_count"].pct_change() * 100
-    df["kr_m2_change"] = df["kr_m2"].pct_change() * 100
-    df["buyer_dominance_change"] = df["buyer_dominance"].diff()
+    # 3. 파생 변수 엔지니어링 (변수 특성에 맞게 pct_change / diff 구분)
+    # 절댓값 스케일이 큰 변수 → 변화율(pct_change)
+    rate_cols = ["house_price_idx", "kr_cpi", "kospi200", "apt_trade_count", "kr_m2"]
+    # 금리·지수처럼 이미 % 단위인 변수 → 차분(diff)
+    diff_cols  = ["kr_unemployment", "kr_base_rate", "kr_mortgage_rate", "buyer_dominance"]
 
-    # Seasonality Features
+    stationary_cols = []
+    for col in rate_cols:
+        df[f"{col}_change"] = df[col].pct_change() * 100
+        stationary_cols.append(f"{col}_change")
+    for col in diff_cols:
+        df[f"{col}_change"] = df[col].diff()
+        stationary_cols.append(f"{col}_change")
+
+    # Lag 변수 (1~3개월)
+    lagged_features = []
+    for col in stationary_cols:
+        for lag in [1, 2, 3]:
+            df[f"{col}_lag{lag}"] = df[col].shift(lag)
+            lagged_features.append(f"{col}_lag{lag}")
+
+    # 이동평균 (3개월, 6개월)
+    rolling_features = []
+    for col in ["house_price_idx_change", "buyer_dominance_change",
+                "apt_trade_count_change", "kr_mortgage_rate_change"]:
+        if col in df.columns:
+            df[f"{col}_ma3"] = df[col].rolling(window=3).mean()
+            df[f"{col}_ma6"] = df[col].rolling(window=6).mean()
+            rolling_features.extend([f"{col}_ma3", f"{col}_ma6"])
+
+    # 계절성: sin/cos 인코딩 (주기 연속성 보존)
     month_series = pd.to_datetime(df['date_ym'], format='%Y%m').dt.month
     df['month_sin'] = np.sin(2 * np.pi * month_series / 12)
     df['month_cos'] = np.cos(2 * np.pi * month_series / 12)
     seasonality_features = ['month_sin', 'month_cos']
 
-    # Lags
-    stationary_cols = [
-        "house_price_idx_change", "kr_cpi_change", "kr_unemployment_change",
-        "kr_mortgage_rate_change", "kospi200_change", "buyer_dominance_change",
-        "apt_trade_count_change"
-    ]
+    candidate_features = stationary_cols + lagged_features + rolling_features + seasonality_features
 
-    lagged_features = []
-    for col in stationary_cols:
-        df[f"{col}_lag1"] = df[col].shift(1)
-        df[f"{col}_lag2"] = df[col].shift(2)
-        df[f"{col}_lag3"] = df[col].shift(3)
-        lagged_features.extend([f"{col}_lag1", f"{col}_lag2", f"{col}_lag3"])
-
-    # Moving Averages
-    rolling_features = []
-    for col in ["house_price_idx_change", "buyer_dominance_change", "apt_trade_count_change", "kr_mortgage_rate_change"]:
-        df[f"{col}_ma3"] = df[col].rolling(window=3).mean()
-        df[f"{col}_ma6"] = df[col].rolling(window=6).mean()
-        rolling_features.extend([f"{col}_ma3", f"{col}_ma6"])
-
-    candidate_features = [
-        "kr_cpi_change", "kr_unemployment_change",
-        "kr_base_rate_change", "kr_mortgage_rate_change", "kospi200_change",
-        "apt_trade_count_change", "kr_m2_change", "buyer_dominance_change"
-    ] + lagged_features + rolling_features + seasonality_features
+    # candidate_features에 결측치(NaN)가 있는 앞부분 행들을 제거 (ffill/bfill 대신 dropna 적용)
+    df = df.dropna(subset=candidate_features).reset_index(drop=True)
 
     # Train/Test split (Fixed Date Split)
     from model import RealEstateEnsembleRegressor as cfg
@@ -183,43 +179,44 @@ def preprocess_data(vif_threshold=5.0):
     train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
     test_df  = df[df['date_ym'] >= cfg.TEST_START].copy()
 
-    train_df[candidate_features] = train_df[candidate_features].ffill().bfill()
-    test_df[candidate_features] = test_df[candidate_features].ffill().bfill()
+    # 모델 학습/평가 세트 추출 시에만 TARGET 결측치를 드롭함
+    train_clean = train_df.dropna(subset=[TARGET]).copy()
+    test_clean  = test_df.dropna(subset=[TARGET]).copy()
 
     print("=" * 55)
     print("Data Preprocessing & Train/Test Splitting")
     print("=" * 55)
-    print(f"  Total samples     : {len(df)}")
-    print(f"  Train period      : {train_df['date_ym'].min()} ~ {train_df['date_ym'].max()} ({len(train_df)} months)")
-    print(f"  Test period       : {test_df['date_ym'].min()} ~ {test_df['date_ym'].max()} ({len(test_df)} months)")
+    print(f"  Total samples (raw)     : {len(df)}")
+    print(f"  Train period (clean)    : {train_clean['date_ym'].min()} ~ {train_clean['date_ym'].max()} ({len(train_clean)} months)")
+    print(f"  Test period (clean)     : {test_clean['date_ym'].min()} ~ {test_clean['date_ym'].max()} ({len(test_clean)} months)")
 
-    selected_features = filter_features_by_vif(train_df, candidate_features, threshold=vif_threshold, max_features=6)
+    selected_features = filter_features_by_vif(train_clean, candidate_features, threshold=vif_threshold, max_features=6)
 
-    X_train = train_df[selected_features]
-    y_train = train_df[TARGET]
-    X_test = test_df[selected_features]
-    y_test = test_df[TARGET]
+    X_train = train_clean[selected_features]
+    y_train = train_clean[TARGET]
+    X_test = test_clean[selected_features]
+    y_test = test_clean[TARGET]
 
-    scaler = StandardScaler()
-    X_train_sc = scaler.fit_transform(X_train)
-    X_test_sc = scaler.transform(X_test)
+    # 트리 기반 앙상블 모델은 피처 스케일링이 필요 없으므로 StandardScaler를 비활성화함
+    X_train_sc = X_train.values
+    X_test_sc = X_test.values
 
     preprocessed_data = {
         'df': df,
-        'train_df': train_df,
-        'test_df': test_df,
+        'train_df': train_clean,
+        'test_df': test_clean,
         'X_train_sc': X_train_sc,
         'X_test_sc': X_test_sc,
         'y_train': y_train,
         'y_test': y_test,
         'features': selected_features,
-        'scaler': scaler
+        'scaler': None
     }
 
     # -----------------------------------------
     # DB 적재: ml_realestate_preprocessed (gold/base_rate와 동일한 방식)
     # -----------------------------------------
-    all_feature_cols = ['house_price_idx', 'house_price_idx_change'] + candidate_features
+    all_feature_cols = ['house_price_idx'] + candidate_features
     final_order = ['date_ym'] + all_feature_cols + [TARGET]
 
     # 저장할 컬럼만 추려서 결측치 처리
