@@ -30,8 +30,7 @@ def load_data_from_mysql():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     csv_path = os.path.join(base_dir, 'data', 'final_dataset.csv')
     
-    env_path = os.path.abspath(os.path.join(base_dir, '../../.env'))
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(find_dotenv())
     
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')

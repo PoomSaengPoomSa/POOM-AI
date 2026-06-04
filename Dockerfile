@@ -5,8 +5,8 @@ WORKDIR /app
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 # TODO: requirements.txt 완성 후 아래 주석 해제
-# COPY requirements.txt .
-# RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
  
 # ---- Runtime stage ----
 FROM python:3.11-slim

@@ -26,13 +26,13 @@ load_dotenv(os.path.join(back_path, ".env"))
 
 # LangSmith 환경변수 명칭 동적 매핑 지원 (LANGSMITH_ -> LANGCHAIN_ 표준 호환)
 if os.getenv("LANGSMITH_TRACING") is not None:
-    os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING")
+    os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING").strip('"\'')
 if os.getenv("LANGSMITH_API_KEY") is not None:
-    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY")
+    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY").strip('"\'')
 if os.getenv("LANGSMITH_ENDPOINT") is not None:
-    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT")
+    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT").strip('"\'')
 if os.getenv("LANGSMITH_PROJECT") is not None:
-    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT")
+    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT").strip('"\'')
 
 logger = logging.getLogger(__name__)
 

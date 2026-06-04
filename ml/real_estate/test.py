@@ -6,19 +6,16 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
 from utils.preprocess import preprocess_data
 
-def evaluate(y_true, y_pred, n_samples=None, n_features=None):
+def evaluate(y_true, y_pred):
     mae = mean_absolute_error(y_true, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = np.sqrt(mse)
     r2 = r2_score(y_true, y_pred)
-    if n_samples is not None and n_features is not None and n_samples > n_features + 1:
-        adj_r2 = 1 - (1 - r2) * (n_samples - 1) / (n_samples - n_features - 1)
-    else:
-        adj_r2 = r2
     return {
-        "MAE": round(mae, 4),
-        "RMSE": round(rmse, 4),
-        "R2": round(r2, 4),
-        "Adj_R2": round(adj_r2, 4)
+        "rmse": round(rmse, 4),
+        "r2": round(r2, 4),
+        "mae": round(mae, 4),
+        "mse": round(mse, 6)
     }
 
 def run_test():
@@ -78,22 +75,22 @@ def run_test():
     n_features = len(selected_features)
     
     results = {}
-    results["LinearRegression (OLS)"] = evaluate(y_test, lr_pred, n_samples, n_features)
-    results["Ridge Regression (alpha=1.0)"] = evaluate(y_test, ridge_pred, n_samples, n_features)
+    results["LinearRegression (OLS)"] = evaluate(y_test, lr_pred)
+    results["Ridge Regression (alpha=1.0)"] = evaluate(y_test, ridge_pred)
     
     for name, pred in ind_preds.items():
-        results[f"Individual {name}"] = evaluate(y_test, pred, n_samples, n_features)
+        results[f"Individual {name}"] = evaluate(y_test, pred)
         
-    results["Ensemble (Weighted ML Blend)"] = evaluate(y_test, ensemble_pred, n_samples, n_features)
+    results["Ensemble (Weighted ML Blend)"] = evaluate(y_test, ensemble_pred)
     
     # Print results
     print("\n" + "=" * 75)
     print("Model Comparison and Evaluation (Last 24 Months Test Set)")
     print("=" * 75)
-    print(f"{'Model Name':<30} {'MAE':>10} {'RMSE':>10} {'R2 Score':>10} {'Adj R2':>10}")
+    print(f"{'Model Name':<30} {'RMSE':>10} {'R2':>10} {'MAE':>10} {'MSE':>12}")
     print("-" * 75)
     for model_name, metrics in results.items():
-        print(f"{model_name:<30} {metrics['MAE']:>10.4f} {metrics['RMSE']:>10.4f} {metrics['R2']:>10.4f} {metrics['Adj_R2']:>10.4f}")
+        print(f"{model_name:<30} {metrics['rmse']:>10.4f} {metrics['r2']:>10.4f} {metrics['mae']:>10.4f} {metrics['mse']:>12.6f}")
     print("=" * 75)
     
     # Save results

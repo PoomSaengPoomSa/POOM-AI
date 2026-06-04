@@ -22,8 +22,8 @@ def load_raw_data():
     """
     MySQL 데이터베이스에서 ml_gold_raw 테이블을 날짜 순으로 전량 로드합니다.
     """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    load_dotenv(dotenv_path=os.path.join(base_dir, '../../.env'))
+    from dotenv import find_dotenv
+    load_dotenv(find_dotenv())
 
     db_user = os.getenv("DB_USER")
     db_password = os.getenv("DB_PASSWORD")

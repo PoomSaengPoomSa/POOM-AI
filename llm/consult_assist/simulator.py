@@ -6,12 +6,7 @@ from dotenv import load_dotenv, find_dotenv
 
 # Set paths and load environment variables
 current_dir = os.path.dirname(os.path.abspath(__file__))
-dotenv_path = os.path.join(current_dir, ".env")
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path)
-else:
-    # Look in the parent/root directories
-    load_dotenv(find_dotenv())
+load_dotenv(find_dotenv())
 
 def get_simulator_system_prompt() -> str:
     """Read the simulator system prompt from prompt/simulator_system_prompt.md."""

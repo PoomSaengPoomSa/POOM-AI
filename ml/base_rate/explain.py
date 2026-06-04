@@ -25,12 +25,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
 
 def load_data_from_mysql():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    env_path = os.path.join(base_dir, '.env')
-    if os.path.exists(env_path):
-        load_dotenv(dotenv_path=env_path)
-    else:
-        load_dotenv(find_dotenv())
+    load_dotenv(find_dotenv())
     
     DB_USER = os.getenv('DB_USER')
     DB_PASSWORD = os.getenv('DB_PASSWORD')
