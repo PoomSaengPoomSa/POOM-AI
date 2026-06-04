@@ -41,6 +41,9 @@ class ChurnAssessment2(BaseModel):
     reason: str = Field(
         description="판정 사유. 반드시 공백 포함 80자 이내의 한 문장(한국어 경어체)으로 간결하게 작성해 주세요. (VARCHAR(100) 길이 제약)"
     )
+    explain_reason: str = Field(
+        description="판정 상세 설명. 공백 포함 200자 내외의 구체적인 근거와 배경을 포함한 한국어 경어체 설명을 작성해 주세요. (TEXT 컬럼)"
+    )
 
 class ToolSelection2(BaseModel):
     call_customer: bool = Field(description="고객 기본 프로필 및 자산 비중 정보(customer)를 조회할지 여부.")
@@ -61,6 +64,7 @@ class Agent2State(TypedDict):
     customer_transactions: Optional[List[Dict[str, Any]]]
     churn_grade: Optional[str]
     churn_reason: Optional[str]
+    churn_explain_reason: Optional[str]
     errors: List[str]
 
 # 3. 노드 구현체 정의
@@ -237,7 +241,7 @@ def analyze_churn_node(state: Agent2State) -> Dict[str, Any]:
             "tx_str": tx_str
         })
 
-        return {"churn_grade": assessment.grade.strip(), "churn_reason": assessment.reason.strip()}
+        return {"churn_grade": assessment.grade.strip(), "churn_reason": assessment.reason.strip(), "churn_explain_reason": assessment.explain_reason.strip()}
     except Exception as e:
         errors.append(f"analyze_churn failed: {str(e)}")
         return {"errors": errors}
@@ -251,6 +255,7 @@ def verify_churn_node(state: Agent2State) -> Dict[str, Any]:
     customer_transactions = state.get("customer_transactions", [])
     churn_grade = state.get("churn_grade")
     churn_reason = state.get("churn_reason")
+    churn_explain_reason = state.get("churn_explain_reason")
     
     if not churn_grade or not churn_reason:
         errors.append("verify_churn failed: Churn grade or reason missing in state.")
@@ -267,6 +272,7 @@ def verify_churn_node(state: Agent2State) -> Dict[str, Any]:
             "3. **사유와 등급의 일치성**: 판정 사유(reason) 내용이 결정된 등급(grade)과 비즈니스 논리적으로 일치해야 하며 모순이 없어야 합니다.\n\n"
             "### [출력 및 규격 제한 (엄격 적용)]\n"
             "- 판정 사유(reason)는 반드시 **공백 포함 80자 이내의 한 문장(한국어 경어체)**이어야 합니다. (마크다운 기호 금지)\n"
+            "- 판정 상세 설명(explain_reason)은 **공백 포함 200자 내외의 한국어 경어체 문장**으로, 판정 근거가 되는 구체적 데이터 포인트(거래 금액, 타행명, 메모 내용 등)와 판단 배경을 서술해 주십시오. (마크다운 기호 금지)\n"
             "- 이탈 등급(grade)은 오직 '양호', '주의', '위험' 중 하나여야 합니다."
         )
         
@@ -289,7 +295,7 @@ def verify_churn_node(state: Agent2State) -> Dict[str, Any]:
         
         user_content = (
             f"### [고객 자산 및 거래 팩트 데이터]\n{customer_facts}\n"
-            f"### [1차 판정 결과]\n- 등급: {churn_grade}\n- 사유: {churn_reason}\n"
+            f"### [1차 판정 결과]\n- 등급: {churn_grade}\n- 사유: {churn_reason}\n- 상세 설명: {churn_explain_reason}\n"
         )
         
         llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=OPENAI_API_KEY)
@@ -309,16 +315,22 @@ def verify_churn_node(state: Agent2State) -> Dict[str, Any]:
             grade = "양호"
             
         reason = verified.reason.strip()
+        explain_reason = verified.explain_reason.strip()
         # 마크다운 서식 소거
         for char in ['*', '#', '_', '|', '`', '-']:
             reason = reason.replace(char, '')
+            explain_reason = explain_reason.replace(char, '')
             
         if len(reason) > 80:
             print(f"   [Verification Node - ChurnRisk] Warning: Reason length ({len(reason)}) exceeds 80 chars. Truncating.")
             reason = reason[:77] + "..."
+
+        if len(explain_reason) > 300:
+            print(f"   [Verification Node - ChurnRisk] Warning: Explain length ({len(explain_reason)}) exceeds 300 chars. Truncating.")
+            explain_reason = explain_reason[:297] + "..."
             
-        print(f"   [Verification Node - ChurnRisk] Verification completed. Grade: {churn_grade} -> {grade}, Reason length: {len(reason)}")
-        return {"churn_grade": grade, "churn_reason": reason}
+        print(f"   [Verification Node - ChurnRisk] Verification completed. Grade: {churn_grade} -> {grade}, Reason length: {len(reason)}, Explain length: {len(explain_reason)}")
+        return {"churn_grade": grade, "churn_reason": reason, "churn_explain_reason": explain_reason}
     except Exception as e:
         errors.append(f"verify_churn failed: {str(e)}")
         return {"errors": errors}
@@ -330,10 +342,11 @@ def save_results_node(state: Agent2State) -> Dict[str, Any]:
     customer_id = state["customer_id"]
     churn_grade = state["churn_grade"]
     churn_reason = state["churn_reason"]
+    churn_explain_reason = state.get("churn_explain_reason", "")
 
     try:
         # 이탈 등급 결과 DB 인서트
-        churn_saved = tools.save_churn_level(customer_id, churn_grade, churn_reason)
+        churn_saved = tools.save_churn_level(customer_id, churn_grade, churn_reason, churn_explain_reason)
         if not churn_saved:
             raise ValueError(f"Failed to insert churn risk level into churn_level table for ID {customer_id}")
 
@@ -385,6 +398,7 @@ class ChurnRiskAgent:
             "customer_transactions": None,
             "churn_grade": None,
             "churn_reason": None,
+            "churn_explain_reason": None,
             "errors": []
         }
         final_state = self.app.invoke(
