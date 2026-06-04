@@ -28,6 +28,14 @@ def get_all_customer_ids():
         return [row["c_id"] for row in results]
 
 def main():
+    # CLI encoding defense
+    if sys.platform.startswith('win'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stdin.reconfigure(encoding='utf-8')
+        except AttributeError:
+            pass
+
     parser = argparse.ArgumentParser(description="Poom Customer Feature Agent (Agent 2) Runner")
     parser.add_argument(
         "--c_id", 
@@ -80,7 +88,7 @@ def main():
         try:
             print(f"  -> Executing Sub Agent 2 LangGraph workflow...")
             result = feature_agent.run(c_id)
-            print(f"     [Success] Extracted {len(result['extracted_features'])} features and matched {len(result['product_matchings'])} products.")
+            print(f"     [Success] Extracted {len(result['extracted_features'])} raw features and processed {len(result.get('refined_decisions', []))} refined decisions.")
             success_count += 1
             print(f"  [+] Customer {c_id} completed successfully.\n")
         except Exception as e:
