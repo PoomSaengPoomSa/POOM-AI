@@ -187,7 +187,7 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
     question = state["question"]
     customer_id = state["customer_id"]
     chroma_db_dir = os.path.join(current_dir, "data", "chroma_db")
-    THRESHOLD = 0.6
+    THRESHOLD = 1.2
     
     retrieved_knowledge_parts = []
     
