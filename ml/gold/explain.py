@@ -13,7 +13,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib import font_manager, rc
 import pymysql
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from model import GoldModel
 import warnings
 
@@ -96,8 +96,8 @@ def explain_model():
     df = load_data_from_mysql()
     cfg = GoldModel
 
-    split_idx = int(len(df) * cfg.TRAIN_RATIO)
-    test_df = df.iloc[split_idx:].copy()
+    df['loaded_date'] = df['loaded_date'].astype(str).str.strip()
+    test_df = df[df['loaded_date'] >= cfg.TEST_START].copy()
 
     X_test = test_df[feature_names]
     y_test = test_df['target_tomorrow_gold_direction'].values

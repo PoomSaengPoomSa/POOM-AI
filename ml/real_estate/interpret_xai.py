@@ -3,6 +3,47 @@ import pandas as pd
 from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
 
+def save_report_to_mysql(content, report_type):
+    import pymysql
+    
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB credentials. Skipping DB save for LLM report.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                report_id = f"rpt_{report_type}"  # ← 고정 ID
+                sql = """
+                INSERT INTO trend_llm_report (report_id, type, language, content, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON DUPLICATE KEY UPDATE
+                    content = VALUES(content),
+                    created_at = NOW(),
+                    status = 'done'
+                """
+                cursor.execute(sql, (report_id, report_type, "ko", content, "done"))
+            connection.commit()
+            print(f"[DB] Successfully saved/updated {report_type} XAI report to MySQL trend_llm_report table.")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save {report_type} XAI report to MySQL: {e}")
+
 def run_interpret():
     # 1. 환경변수 및 기본 경로 설정
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -120,6 +161,9 @@ def run_interpret():
             f.write(result_text)
 
         print(f"\n[OK] 분석 완료! 파일이 성공적으로 저장되었습니다: {output_path}")
+        
+        # Save dynamic XAI report to MySQL DB table
+        save_report_to_mysql(result_text, "real_estate")
 
     except Exception as e:
         print(f"[ERROR] OpenAI API 호출 중 오류 발생: {e}")

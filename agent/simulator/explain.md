@@ -1,0 +1,197 @@
+# POOM Premium 자산관리 PB Co-pilot 에이전트 설명서 (explain.md)
+
+본 문서는 우리은행의 프리미엄 자산관리 서비스인 **POOM (품)**의 PB(Private Banker) 상담 지원용 Co-pilot 에이전트의 구조, 기능, 데이터 흐름 및 파일 구성에 대해 상세히 기술합니다.
+
+---
+
+## 1. 에이전트 개요 (Agent Overview)
+POOM 자산관리 시뮬레이터 에이전트는 PB가 초고액 자산가 고객을 상담할 때 필요한 세무 지식, 상품 혜택, 시장 전망 정보를 실시간으로 분석하여 **최적의 피칭 시나리오와 상담 화법(스크립트)을 백업해주는 전문 어시스턴트**입니다. 
+LangGraph 기반의 상태 기반 아키텍처(State Graph)로 설계되어 있으며, 질문의 의도 분석부터 RAG 기반 행내 지식 검색, 실시간 웹 검색, MySQL DB 연동을 유기적으로 제어합니다.
+
+---
+
+## 2. 에이전트 구조 (Architecture)
+
+에이전트는 상태 기반 제어 프레임워크인 **LangGraph**를 활용하여 단계별 노드(Node)를 거치며 상태 객체(State)를 업데이트하고 최종 답변을 도출합니다.
+
+### 2.1 상태 객체 스키마 (SimulatorState)
+상태 객체는 그래프 전반에 걸쳐 공유 및 유지되는 데이터 구조입니다.
+*   `customer_id` (int): 시뮬레이션 대상 고객 식별 ID
+*   `question` (str): PB가 입력한 질문 (입력)
+*   `context_content` (str): 고객의 기본 프로필 텍스트
+*   `history` (list): PB와 에이전트 간의 과거 대화 이력 (최대 10개 턴 유지)
+*   `intent` (str): 질문의 분석된 의도 (`knowledge` 또는 `general`)
+*   `retrieved_knowledge` (str): RAG 검색 또는 Tavily 웹 검색을 통해 확보된 금융/세무 지식
+*   `recent_features_1m` (str): MySQL에서 조회된 고객의 최근 1개월 이내 행동/상담 특징 요약
+*   `answer` (str): LLM이 최종 생성한 피칭 조언 답변 (출력)
+*   `errors` (list): 노드 실행 중 발생한 오류 로그 목록
+
+### 2.2 그래프 노드 및 엣지 구성
+에이전트는 4개의 핵심 상태 처리 노드와 1개의 조건부 라우팅 엣지로 구성됩니다. 전체 구조와 노드별 상세 데이터 흐름은 아래와 같습니다.
+
+```mermaid
+flowchart TD
+    Start([시작: PB 질문 입력]) --> Node1["load_context<br>(고객 프로필 및 대화이력 로드)"]
+    Node1 --> Node2["route_intent<br>(의도 판별: gpt-4o-mini)"]
+    Node2 --> Edge1{"의도 분류"}
+    
+    Edge1 -- "general<br>(일반 대화/화법)" --> Node4["generate_answer<br>(최종 피칭 조언 생성)"]
+    Edge1 -- "knowledge<br>(전문 지식 조회)" --> Node3["knowledge<br>(통합 지식 융합 노드)"]
+    
+    subgraph knowledge_node [knowledge 노드 내부 동작]
+        direction TB
+        K1["ChromaDB RAG 검색<br>(세법 및 하우스뷰 PDF)"] --> K2{"임계값 만족?<br>(L2 거리 < 0.6)"}
+        K2 -- No / Error --> K3["Tavily Web Search<br>(실시간 웹 검색 Fallback)"]
+        K2 -- Yes --> K4["RAG 컨텍스트 병합"]
+        K3 --> K4
+        
+        DB1["MySQL DB 연동"] --> DB2["get_customer_held_products<br>(고객 보유 상품 조회)"]
+        DB1 --> DB3["get_all_products<br>(전체 금융 상품 조회)"]
+        DB1 --> DB4["get_customer_product_matching<br>(고객 상품 적합성 분석)"]
+        DB1 --> DB5["customer_information<br>(최근 1개월 특징 조회)"]
+        
+        K4 --> Merge["통합 컨텍스트 병합<br>(retrieved_knowledge & recent_features_1m)"]
+        DB2 --> Merge
+        DB3 --> Merge
+        DB4 --> Merge
+        DB5 --> Merge
+    end
+    
+    Node3 --> knowledge_node
+    Merge --> Node4
+    Node4 --> Node5["post_process<br>(Plain Text 포맷팅 & 마크다운 제거)"]
+    Node5 --> Node6["save_history<br>(대화 기록 history.json 저장)"]
+    Node6 --> End([종료: 최종 조언 출력])
+```
+
+1.  **`load_context`** (고객 기본 정보 로드)
+    *   지정된 `customer_id`에 해당하는 로컬 프로필 파일(예: [customer_1001.md](./data/customer_1001.md))을 탐색하여 고객 자산 현황 및 분석 인사이트를 로드합니다.
+    *   동시에 해당 고객의 과거 대화 이력(예: [customer_1001_history.json](./data/customer_1001_history.json))을 가져와 최대 10턴 이내로 제한해 `history`에 저장합니다.
+2.  **`route_intent`** (의도 라우팅)
+    *   `gpt-4o-mini` 모델의 구조화된 출력(Structured Output) 기능을 활용하여 PB 질문의 의도를 분석합니다.
+    *   의도는 전문 지식/DB 조회가 필요한 `knowledge`와 단순 일반 상담/화법인 `general` 2가지 범주로 분류됩니다. (분류 프롬프트 명세: [intent_router_system_prompt.md](./prompt/intent_router_system_prompt.md))
+3.  **`route_conditional_edge`** (조건부 라우터 엣지)
+    *   의도가 `general`인 경우, `knowledge` 노드를 완전히 우회(Skip)하여 즉시 `generate_answer` 노드로 진입합니다.
+    *   의도가 `knowledge`인 경우, `knowledge` 노드로 분기합니다.
+4.  **`knowledge`** (통합 지식 융합 노드)
+    *   의도가 `knowledge`인 경우에 실행되며, 다음 3가지 소스를 동시에 조회하여 하나의 거대한 컨텍스트로 융합합니다:
+        *   **VectorDB RAG**: `2026년 개정세법 해설.pdf` 및 `1. 2026년 6월 House View.pdf` 등 모든 문서를 포함한 ChromaDB에서 전체 범위 검색을 수행합니다. L2 거리 임계값 `0.6` 미만인 지식 청크만 선별하며, 만족하는 지식이 없거나 오류가 발생할 경우 Tavily API 실시간 웹 검색을 Fallback으로 활용합니다.
+        *   **MySQL 상품 정보**: MySQL DB에서 각각의 전용 연동 도구를 통해 고객 보유 상품 리스트, 전체 상품 스펙, AI 적합도 점수 및 추천 사유를 병합 추출합니다. ([tools.py](./tools.py) 내 `get_customer_held_products`, `get_all_products`, `get_customer_product_matching` 호출)
+        *   **MySQL 고객 1개월 특징**: `customer_information` 테이블에서 최근 1개월 이내 기록된 고객 행동 및 특이사항 메모를 수집합니다.
+    *   수집된 DB 정보와 RAG 정보를 가공하여 `retrieved_knowledge`와 `recent_features_1m` 상태를 업데이트합니다.
+5.  **`generate_answer`** (답변 생성 및 후처리)
+    *   고객 기본 컨텍스트, 1개월 특징, 통합 지식을 융합하여 프롬프트를 조립하고 `gpt-4o-mini`를 통해 최종 상담 가이드를 생성합니다. (기본 템플릿 명세: [simulator_system_prompt.md](./prompt/simulator_system_prompt.md))
+    *   출력물에 마크다운 기호가 노출되지 않도록 시스템 레벨에서 제거하고, 시스템 후처리를 통해 답변 끝에 `[참조 출처: ...]`를 강제로 덧붙입니다.
+    *   생성된 답변과 질문을 해당 고객의 대화 이력 파일([customer_*.json](./data/))에 영구 저장합니다.
+
+---
+
+### 2.3 전체 시스템 연동 및 데이터 흐름 (System Sequence Diagram)
+프론트엔드 UI, 백엔드 API, AI 에이전트 및 DB가 유기적으로 상호작용하는 대화 라이프사이클 및 대화 이력 초기화 흐름은 다음과 같습니다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor PB as PB (사용자)
+    participant FE as 프론트엔드 (React)
+    participant BE as 백엔드 (FastAPI)
+    participant Agent as AI 에이전트 (LangGraph)
+    participant DB as MySQL DB
+    participant Vector as ChromaDB (VectorDB)
+    participant Web as Tavily API (External)
+
+    %% 1. 대화 초기 로드
+    Note over PB, FE: 1. 상담 화면 진입 (초기 데이터 로딩)
+    FE->>BE: GET /api/customer/{id}/simulator
+    BE->>BE: customer_{id}_history.json 파일 리드
+    BE-->>FE: 대화 히스토리 및 고객 기본 정보 응답
+    FE-->>PB: 이전 채팅 내역 복원 및 화면 복사
+
+    %% 2. 질문 처리
+    Note over PB, Agent: 2. 질문 입력 및 실시간 추론 진행
+    PB->>FE: 질문 입력 (예: "우리WON플러스예금 금리는?")
+    FE->>BE: POST /api/customer/{id}/simulator (질문 전송)
+    BE->>Agent: subprocess 실행 (simulator.py {id} "{question}")
+    
+    Agent->>Agent: load_context (프로필 & 히스토리 읽기)
+    Agent->>Agent: route_intent (의도 판별: knowledge)
+    
+    par DB 조회 및 RAG 검색 병렬 처리
+        Agent->>Vector: query_knowledge_base (ChromaDB 쿼리)
+        Vector-->>Agent: 텍스트 청크 반환 (유사도 검증)
+        alt 유사도 임계값(0.6) 미달 시 Web Fallback
+            Agent->>Web: fetch_from_tavily (실시간 정보 검색)
+            Web-->>Agent: 검색 결과 반환
+        end
+    and DB 상품/특징 조회
+        Agent->>DB: get_customer_held_products / get_all_products / get_customer_product_matching
+        DB-->>Agent: 상품 정보 및 매칭 데이터 반환
+        Agent->>DB: 1개월 특징 조회
+        DB-->>Agent: 최근 특징 데이터 반환
+    end
+    
+    Agent->>Agent: generate_answer (최종 답변 생성 및 Plain Text 정제)
+    Agent->>Agent: customer_{id}_history.json에 새 대화 추가 저장
+    Agent-->>BE: STDOUT으로 결과 출력
+    BE-->>FE: HTTP 응답 (최종 답변 및 업데이트된 히스토리)
+    FE-->>PB: 채팅창에 답변 렌더링 (Plain Text 포맷팅)
+
+    %% 3. 추가 메모 저장 및 초기화
+    Note over PB, FE: 3. 추가 입력 사항 수정 및 저장 (상태 초기화)
+    PB->>FE: '추가 입력 사항' 수정 후 '저장' 클릭
+    FE->>BE: POST /api/customer/{id}/profile (메모 업데이트)
+    BE->>BE: customer_{id}_history.json 삭제 (대화 히스토리 리셋)
+    BE-->>FE: 저장 완료 응답
+    FE->>FE: chatMessages 상태 초기화 ([ ])
+    FE-->>PB: 화면의 채팅창 비우기 (UI Clear)
+```
+
+---
+
+## 3. 주요 기능 및 특징 (Key Features)
+
+### 3.1 통합 지식 노드(knowledge)의 데이터 조회 범위
+*   **VectorDB RAG**: 특정 의도 메타데이터 필터에 묶이지 않고 세법 자료(`2026년 개정세법 해설.pdf`)와 하우스 뷰 리포트 전체를 검색 범위에 포함하여 수집합니다. (L2 거리 `0.6` 미만 기준 준수)
+*   **MySQL 상품 정보**: 실시간 DB에서 상품 상세 및 고객 매칭 정보를 직접 조회하여 RAG 결과와 통합 병합합니다.
+*   **MySQL 고객 특징**: 최근 1개월 특징 리스트를 조회하여 함께 컨텍스트에 로드합니다.
+
+### 3.2 Tavily API 웹 검색 Fallback
+규정이나 이자율 등 수치 민감도가 높은 질문에 대해 행내 벡터 DB 검색 결과가 유사도 임계값을 넘지 못할 경우, Tavily Search API를 사용하여 실시간 포털 정보를 즉시 주입받습니다. 이는 지식 부재로 인한 모델의 환각(Hallucination) 현상을 원천적으로 차단합니다.
+
+### 3.3 임의 자산 정보 창작(할루시네이션) 방지 지침
+고객 프로필 데이터베이스나 대화 맥락에 존재하지 않는 구체적인 예적금 잔액, 가입 상품명, 투자 종목 등을 모델이 임의로 작명하고 수치를 상상하여 피드백하는 현상을 완벽히 규제합니다. 컨텍스트 내에 관련 정보가 존재하지 않는 자산 내역 조회의 경우, 임의의 수치를 창조하지 않고 "제공된 정보에 구체적인 자산 잔액이 존재하지 않아 조회가 불가능하다"는 안내 문구로 정중하게 예외 처리를 유도하도록 시스템 지침을 명문화했습니다.
+
+### 3.4 프롬프트 조건부 정리 (Clean Prompt)
+RAG 검색 결과가 없거나, 1개월 특징 조회가 생략(또는 데이터 없음)된 경우 사용자 프롬프트 템플릿 내의 관련 섹션 헤더(`[고객의 최근 1개월 이내 특징 및 메모 (DB)]` 등)를 시스템 레벨에서 제거합니다. 이는 프롬프트의 가독성을 높이고 LLM의 무의미한 텍스트 학습이나 오작동을 방지합니다.
+
+### 3.5 순수 텍스트(Plain Text) 출력 표준화
+에이전트는 마크다운 렌더러가 부재한 행내 터미널이나 전용 텍스트 뷰어에 최적화된 결과물을 출력합니다.
+*   샵 기호(`#`), 볼드 기호(`**`), 표 구조 기호(`| --- |`) 등 **모든 마크다운 문법의 출력을 금지**합니다.
+*   대괄호 `[소제목]`와 수동 탭 정렬, 줄바꿈을 활용하여 가독성이 뛰어난 Plain Text 구조를 제공합니다.
+
+---
+
+## 4. 파일 구성 및 역할 (Files & Modules)
+에이전트가 위치한 디렉토리 내부의 구성 파일 정보는 다음과 같습니다.
+
+*   [simulator.py](./simulator.py)
+    *   상태 그래프(`StateGraph`) 정의, 노드 구현, 컴파일된 앱 인스턴스화가 포함된 핵심 에이전트 구동 소스 코드입니다.
+    *   기존 CLI 입출력 연동을 유지하기 위한 레거시 래퍼 `run_simulation()`을 제공합니다.
+*   [tools.py](./tools.py)
+    *   에이전트가 사용하는 연동 도구 모음입니다. Tavily 실시간 검색 API를 호출하는 `fetch_from_tavily()`, ChromaDB 벡터 쿼리 및 임계값 전처리를 수행하는 `query_knowledge_base()`, 그리고 MySQL에서 실시간 고객 보유 상품을 조회하는 `get_customer_held_products()`, 전체 금융 상품을 조회하는 `get_all_products()`, 적합성 점수 및 매칭 사유(`product_matching`)를 조회하는 `get_customer_product_matching()`, 그리고 상품 컨텍스트를 구조화 포맷팅해주는 `format_products_context()`가 모듈화되어 있습니다.
+*   [test_simulator.py](./test_simulator.py)
+    *   터미널에서 에이전트와 실시간 대화를 수행하고, 데이터베이스 및 RAG 연동 과정을 디버그 로그(stderr)로 추적할 수 있도록 제작된 대화형 CLI 검증 도구입니다.
+*   [utils/ingest.py](./utils/ingest.py)
+    *   행내 수집 PDF 가이드 문서 파싱(Text Splitting)을 거쳐 OpenAI 임베딩API를 통해 ChromaDB로 지식을 이관 적재하는 배치 엔지니어링 유틸리티입니다. (MySQL 상품 테이블 데이터를 ChromaDB에 복제 적재하지 않도록 제거 완료)
+*   [prompt/simulator_system_prompt.md](./prompt/simulator_system_prompt.md)
+    *   역할 정체성, 4단계 구조화 답변 레이아웃 지침, Plain Text 포맷 제약, 출처 표기 원칙이 고도화되어 정의된 시스템 프롬프트 명세서입니다.
+*   [prompt/simulator_user_prompt.md](./prompt/simulator_user_prompt.md)
+    *   고객 프로필 정보, DB 특징 메모, RAG 지식이 주입되는 동적 사용자 컨텍스트 템플릿입니다.
+*   [prompt/intent_router_system_prompt.md](./prompt/intent_router_system_prompt.md)
+    *   PB 질문의 의도(`knowledge`, `general`)를 분류하기 위한 라우터용 시스템 프롬프트입니다.
+*   [prompt/assistant_acknowledgment.md](./prompt/assistant_acknowledgment.md)
+    *   대화 도입부에서 에이전트의 첫 응답 인트로로 전송되는 어시스턴트 인지 확인용 고정 대화 템플릿입니다.
+*   [data/](./data/)
+    *   [chroma_db/](./data/chroma_db/) : 591개 텍스트 청크 및 임베딩 벡터 데이터가 저장된 데이터베이스 폴더입니다.
+    *   [raw_data/](./data/raw_data/) : 원천 지식 PDF 문서들이 보관되는 폴더입니다.
+    *   [data/](./data/) 하위의 `customer_*.md` / `customer_*_history.json` : 각 고객의 자산 프로필 및 대화 히스토리 파일이 누적되는 공간입니다.
