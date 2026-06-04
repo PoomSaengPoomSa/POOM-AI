@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import pymysql
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -98,10 +98,10 @@ def test_model():
     X_all = df[feature_names]
     y_all = df['target_tomorrow_gold_direction']
 
-    # Train/Test Split Masks
-    split_idx = int(len(df) * cfg.TRAIN_RATIO)
-    train_mask = df.index < split_idx
-    test_mask  = df.index >= split_idx
+    # Train/Test Split Masks (Fixed Date Split)
+    df['loaded_date'] = df['loaded_date'].astype(str).str.strip()
+    train_mask = df['loaded_date'] <= cfg.TRAIN_END
+    test_mask  = df['loaded_date'] >= cfg.TEST_START
     
     print(f"   Total: {len(df)} days | Train: {train_mask.sum()} days | Test: {test_mask.sum()} days")
 

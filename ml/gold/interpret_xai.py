@@ -1,7 +1,7 @@
 import os
 import base64
 import pandas as pd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 try:
     from openai import OpenAI

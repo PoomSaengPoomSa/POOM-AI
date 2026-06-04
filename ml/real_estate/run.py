@@ -1,50 +1,75 @@
-import os
+import subprocess
 import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 
-# Ensure current directory is in path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import os
+from dotenv import load_dotenv, find_dotenv
 
-from utils.get_data import collect_all
-from train import run_train
-from test import run_test
-from explain import run_explain
-from interpret_xai import run_interpret
+def run_script(script_name):
+    print(f"\n{'='*60}")
+    print(f"[START] 실행 시작: {script_name}")
+    print(f"{'='*60}")
+    
+    python_executable = sys.executable
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), script_name)
+    
+    # Pass current environment to the child process
+    env = os.environ.copy()
+    
+    try:
+        process = subprocess.Popen(
+            [python_executable, "-X", "utf8", script_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            env=env
+        )
+        
+        for line in process.stdout:
+            print(line, end='')
+            
+        process.wait()
+        
+        if process.returncode != 0:
+            print(f"\n[ERROR] 오류 발생: {script_name} 실행 중 문제 발생 (반환 코드: {process.returncode})")
+            sys.exit(process.returncode)
+        else:
+            print(f"\n[OK] 정상 완료: {script_name}")
+            
+    except Exception as e:
+        print(f"\n[ERROR] 실행 예외 발생: {script_name} ({e})")
+        sys.exit(1)
 
 def main():
-    print("=" * 60)
-    print("STARTING REAL ESTATE ML & XAI PIPELINE WORKFLOW")
-    print("=" * 60)
+    # Load .env at the orchestrator level
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    found_env = find_dotenv()
+    if found_env:
+        load_dotenv(dotenv_path=found_env)
+        print(f"[ENV] Loaded environment variables from: {found_env}")
+    else:
+        print(f"[ENV] Warning: .env file not found via find_dotenv()")
+
+    pipeline_scripts = [
+        'utils/get_data.py',
+        'utils/preprocess.py',
+        'train.py',
+        'test.py',
+        'explain.py',
+        'interpret_xai.py'
+    ]
     
-    # 1. Collect Data
-    collect_all()
+    print("[PIPELINE] 부동산 ML 파이프라인 연속 실행 시작 (Collect -> Preprocess -> Train -> Test -> Explain -> Interpret)\n")
     
-    # 2. Train Model
-    print("\n" + "=" * 60)
-    print("STEP 2: TRAINING MODEL...")
-    print("=" * 60)
-    run_train()
-    
-    # 3. Test & Evaluate Model
-    print("\n" + "=" * 60)
-    print("STEP 3: EVALUATING MODEL...")
-    print("=" * 60)
-    run_test()
-    
-    # 4. Explain Model (SHAP)
-    print("\n" + "=" * 60)
-    print("STEP 4: GENERATING EXPLANATIONS (SHAP)...")
-    print("=" * 60)
-    run_explain()
-    
-    # 5. Generate Markdown XAI Narrative Report
-    print("\n" + "=" * 60)
-    print("STEP 5: GENERATING NARRATIVE XAI REPORT...")
-    print("=" * 60)
-    run_interpret()
-    
-    print("\n" + "=" * 60)
-    print("PIPELINE WORKFLOW COMPLETED SUCCESSFULLY!")
-    print("=" * 60)
+    for script in pipeline_scripts:
+        run_script(script)
+        
+    print(f"\n{'='*60}")
+    print("[SUCCESS] 부동산 파이프라인 전체 프로세스가 성공적으로 완료되었습니다!")
+    print(f"{'='*60}")
 
 if __name__ == '__main__':
     main()

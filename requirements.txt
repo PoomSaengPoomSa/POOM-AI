@@ -81,3 +81,4 @@ numpy
 mlflow
 boto3==1.43.15
 cachetools==7.1.4
+boto3
