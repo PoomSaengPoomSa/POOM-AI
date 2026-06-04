@@ -96,16 +96,16 @@ def save_asset_insight(customer_id: int, insight: str):
         rows_affected = cursor.execute(query, (insight, customer_id))
         return rows_affected > 0
 
-def save_churn_level(customer_id: int, grade: str, reason: str):
+def save_churn_level(customer_id: int, grade: str, reason: str, explain_reason: str = ""):
     """
     Insert a new churn risk level assessment into churn_level table.
     """
     query = """
-        INSERT INTO churn_level (c_id, grade, reason, created_date)
-        VALUES (%s, %s, %s, NOW())
+        INSERT INTO churn_level (c_id, grade, reason, explain_reason, created_date)
+        VALUES (%s, %s, %s, %s, NOW())
     """
     with get_db_cursor() as cursor:
-        rows_affected = cursor.execute(query, (customer_id, grade, reason))
+        rows_affected = cursor.execute(query, (customer_id, grade, reason, explain_reason))
         return rows_affected > 0
 
 def get_recent_consultation_report(customer_id: int):
