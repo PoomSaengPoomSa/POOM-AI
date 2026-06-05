@@ -50,4 +50,3 @@ plots/
 
 # Exclude simulator data folder containing temporary customer profiles and histories
 /llm/consult_assist/data/
-/agent/simulator/data/
