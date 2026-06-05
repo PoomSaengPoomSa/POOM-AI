@@ -18,7 +18,7 @@ def evaluate(y_true, y_pred):
         "mse": round(mse, 6)
     }
 
-def run_test():
+def run_test(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir = os.path.join(base_dir, 'models')
     
@@ -36,7 +36,7 @@ def run_test():
         selected_features = pickle.load(f)
         
     # Get preprocessed data
-    data = preprocess_data(vif_threshold=20.0)
+    data = preprocess_data(vif_threshold=20.0, valid_mode=valid_mode)
     if data is None:
         print("[Error] Preprocessing failed.")
         return
@@ -80,9 +80,11 @@ def run_test():
         
     results["Ensemble (Weighted ML Blend)"] = evaluate(y_test, ensemble_pred)
     
+    eval_name = "Validation" if valid_mode else "Test"
+
     # Print results
     print("\n" + "=" * 75)
-    print("Model Comparison and Evaluation (Last 24 Months Test Set)")
+    print(f"Model Comparison and Evaluation ({eval_name} Set)")
     print("=" * 75)
     print(f"{'Model Name':<30} {'RMSE':>10} {'R2':>10} {'MAE':>10} {'MSE':>12}")
     print("-" * 75)
@@ -95,7 +97,7 @@ def run_test():
     os.makedirs(results_dir, exist_ok=True)
     
     metrics_df = pd.DataFrame(results).T.reset_index().rename(columns={'index': 'Model'})
-    metrics_path = os.path.join(results_dir, 'evaluation_metrics.csv')
+    metrics_path = os.path.join(results_dir, f'{eval_name.lower()}_metrics.csv')
     metrics_df.to_csv(metrics_path, index=False, encoding='utf-8-sig')
     print(f"Saved evaluation metrics to: {metrics_path}")
     
@@ -106,7 +108,7 @@ def run_test():
     pred_df['error_ensemble'] = pred_df['next_change_rate'] - pred_df['pred_ensemble']
     pred_df['abs_error_ensemble'] = pred_df['error_ensemble'].abs()
     
-    pred_path = os.path.join(results_dir, 'predictions.csv')
+    pred_path = os.path.join(results_dir, f'{eval_name.lower()}_predictions.csv')
     pred_df.to_csv(pred_path, index=False, encoding='utf-8-sig')
     print(f"Saved predictions comparison to: {pred_path}")
     
@@ -117,4 +119,8 @@ def run_test():
         print(f"  * Date: {row['date_ym']}, Actual Change Rate: {row['next_change_rate']:.4f}%, Predicted: {row['pred_ensemble']:.4f}% (Error: {row['error_ensemble']:.4f}%)")
 
 if __name__ == '__main__':
-    run_test()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode')
+    args = parser.parse_known_args()[0]
+    run_test(valid_mode=args.valid)

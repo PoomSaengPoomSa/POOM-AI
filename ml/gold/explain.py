@@ -81,7 +81,7 @@ def load_data_from_mysql():
             return df
         raise RuntimeError(f"Database connection failed and local CSV not found at: {csv_path}")
 
-def explain_model():
+def explain_model(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir = os.path.join(base_dir, 'models')
     results_dir = os.path.join(base_dir, 'results')
@@ -97,7 +97,12 @@ def explain_model():
     cfg = GoldModel
 
     df['loaded_date'] = df['loaded_date'].astype(str).str.strip()
-    test_df = df[df['loaded_date'] >= cfg.TEST_START].copy()
+    if valid_mode:
+        test_df = df[df['loaded_date'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+        eval_name = "Validation"
+    else:
+        test_df = df[df['loaded_date'].between(cfg.TEST_START, cfg.TEST_END)].copy()
+        eval_name = "Test"
 
     X_test = test_df[feature_names]
     y_test = test_df['target_tomorrow_gold_direction'].values
@@ -308,4 +313,8 @@ def explain_model():
     print(f"{'='*55}\n")
 
 if __name__ == '__main__':
-    explain_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode')
+    args = parser.parse_known_args()[0]
+    explain_model(valid_mode=args.valid)

@@ -91,7 +91,7 @@ def save_contributions_to_mysql(features, shap_values):
         print(f"[Error] Failed to save SHAP contributions to MySQL: {e}")
 
 
-def run_explain():
+def run_explain(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir = os.path.join(base_dir, 'models')
     results_dir = os.path.join(base_dir, 'results')
@@ -111,7 +111,7 @@ def run_explain():
         selected_features = pickle.load(f)
         
     # Get preprocessed data
-    data = preprocess_data(vif_threshold=20.0)
+    data = preprocess_data(vif_threshold=20.0, valid_mode=valid_mode)
     if data is None:
         print("[Error] Preprocessing failed.")
         return
@@ -198,8 +198,8 @@ def run_explain():
     # -----------------------------------------
     # 3. Save Local Waterfall Plots for High-Error Months
     # -----------------------------------------
-    # Load prediction errors from test
-    predictions_path = os.path.join(results_dir, 'predictions.csv')
+    eval_name = "Validation" if valid_mode else "Test"
+    predictions_path = os.path.join(results_dir, f'{eval_name.lower()}_predictions.csv')
     if os.path.exists(predictions_path):
         pred_df = pd.read_csv(predictions_path)
         # Find index of month with maximum absolute error
@@ -230,4 +230,8 @@ def run_explain():
     print("\nSHAP XAI Analysis Completed Successfully!")
  
 if __name__ == '__main__':
-    run_explain()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode')
+    args = parser.parse_known_args()[0]
+    run_explain(valid_mode=args.valid)
