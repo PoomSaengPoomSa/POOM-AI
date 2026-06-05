@@ -112,7 +112,7 @@ def load_context_node(state: SimulatorState) -> Dict[str, Any]:
     Node 1: Load customer profile markdown/txt and historical conversations.
     """
     customer_id = state["customer_id"]
-    data_dir = os.path.join(current_dir, "data")
+    data_dir = os.path.join(current_dir, "data/history")
     
     # Load profile content
     md_path = os.path.join(data_dir, f"customer_{customer_id}.md")
