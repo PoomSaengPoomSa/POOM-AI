@@ -64,9 +64,19 @@ def simulator_chat(req: SimulatorChatRequest):
 
 @app.post("/api/v1/ai-todo/run")
 def run_ai_todo(req: AiTodoRequest):
-    from agent.todo.main import run_agent_for_pb
+    import sys
+    import os
+    todo_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent", "todo"))
+    if todo_dir not in sys.path:
+        sys.path.insert(0, todo_dir)
     try:
-        run_agent_for_pb(req.u_id, req.date)
-        return {"status": "success"}
+        if req.u_id == "all":
+            from agent.todo.scheduler import run_todo_agent_for_all_pbs
+            results = run_todo_agent_for_all_pbs(req.date)
+            return {"status": "success", "results": results}
+        else:
+            from agent.todo.main import run_agent_for_pb
+            result = run_agent_for_pb(req.u_id, req.date)
+            return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
