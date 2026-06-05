@@ -72,10 +72,11 @@ def run_ai_todo(req: AiTodoRequest):
     try:
         if req.u_id == "all":
             from agent.todo.scheduler import run_todo_agent_for_all_pbs
-            run_todo_agent_for_all_pbs(req.date)
+            results = run_todo_agent_for_all_pbs(req.date)
+            return {"status": "success", "results": results}
         else:
             from agent.todo.main import run_agent_for_pb
-            run_agent_for_pb(req.u_id, req.date)
-        return {"status": "success"}
+            result = run_agent_for_pb(req.u_id, req.date)
+            return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
