@@ -26,6 +26,84 @@ if os.path.exists(font_path):
     rc('font', family=font_name)
 plt.rcParams['axes.unicode_minus'] = False
 
+def save_contributions_to_mysql(features, shap_values):
+    import pymysql
+    from dotenv import load_dotenv, find_dotenv
+    import numpy as np
+    
+    # 1. Calculate absolute mean SHAP values for each feature
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    
+    # 2. Map to base variable names
+    base_mapping = {
+        "dxy_proxy": "dxy_proxy",
+        "kr_cpi": "kr_cpi",
+        "kr_usd_exchange": "kr_usd_exchange",
+        "wti_oil": "wti_oil",
+        "vix": "vix",
+        "kospi200": "kospi200",
+        "sp500": "sp500",
+        "kr_base_rate": "kr_base_rate",
+        "kr_unemployment": "kr_unemployment",
+        "kr_gdp": "kr_gdp",
+        "kr_m2": "kr_m2",
+        "us_fed_rate": "us_fed_rate"
+    }
+    
+    grouped_shap = {}
+    for feat, val in zip(features, mean_abs_shap):
+        base_var = None
+        for k in base_mapping.keys():
+            if feat.startswith(k):
+                base_var = base_mapping[k]
+                break
+        if not base_var:
+            base_var = feat
+        grouped_shap[base_var] = grouped_shap.get(base_var, 0.0) + val
+        
+    total_shap = sum(grouped_shap.values())
+    if total_shap > 0:
+        contributions = {k: v / total_shap for k, v in grouped_shap.items()}
+    else:
+        contributions = {k: 1.0 / len(grouped_shap) for k in grouped_shap.keys()}
+        
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping SHAP contributions DB save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM economic_indicator_contribution WHERE type = 'gold'")
+                sql = """
+                INSERT INTO economic_indicator_contribution (type, variable, weight)
+                VALUES (%s, %s, %s)
+                """
+                for var, weight in contributions.items():
+                    cursor.execute(sql, ("gold", var, float(weight)))
+            connection.commit()
+            print(f"[DB] Successfully saved gold SHAP contributions to MySQL ({len(contributions)} features).")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save SHAP contributions to MySQL: {e}")
+
+
 def load_data_from_mysql():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     csv_path = os.path.join(base_dir, 'data', 'final_dataset.csv')
@@ -161,7 +239,13 @@ def explain_model(valid_mode=False):
     print("[XAI] Running TreeExplainer on Tuned XGBoost Model...")
     print(f"{'='*55}")
 
-    explainer = shap.TreeExplainer(classifier)
+    from sklearn.ensemble import VotingClassifier
+    if isinstance(classifier, VotingClassifier):
+        print("[XAI] Model is a VotingClassifier. Extracting XGBoost estimator for SHAP analysis.")
+        base_xgb = classifier.named_estimators_['xgb']
+        explainer = shap.TreeExplainer(base_xgb)
+    else:
+        explainer = shap.TreeExplainer(classifier)
     shap_values = explainer.shap_values(X_test_scaled_df)
 
     # 3. Global Importance Tabular Dumps
@@ -307,6 +391,12 @@ def explain_model(valid_mode=False):
         misclass_csv_path = os.path.join(results_dir, 'misclassification_analysis.csv')
         misclass_df.to_csv(misclass_csv_path, index=False, encoding='utf-8-sig')
         print(f"   [CSV] Saved comprehensive misclassification CSV to: {misclass_csv_path}")
+
+    # Save dynamic SHAP contributions to MySQL DB for real-time dashboard binding
+    try:
+        save_contributions_to_mysql(X_test.columns.tolist(), shap_values)
+    except Exception as e:
+        print(f"[Warning] Failed to save contributions to DB: {e}")
 
     print(f"\n{'='*55}")
     print("🎉 [SUCCESS] SHAP XAI Analysis completed successfully!")
