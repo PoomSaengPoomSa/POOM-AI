@@ -60,7 +60,11 @@ def run_agent_for_pb(u_id: str, date_str: str):
             logger.info("현재 재직 중인 유효 PB ID 목록:")
             for p in active_pbs:
                 logger.info(f" - {p.u_id} ({p.name} {p.position})")
-            return
+            return {
+                "status": "error",
+                "u_id": u_id,
+                "error": f"데이터베이스에 존재하지 않는 PB ID입니다: '{u_id}'"
+            }
 
         logger.info(f"[MATCH] [PB 매칭 완료] {user.name} {user.position} ({user.branch_rel.name if user.branch_rel else '지점 정보 없음'})")
 
@@ -122,9 +126,35 @@ def run_agent_for_pb(u_id: str, date_str: str):
             logger.info("[PIPELINE] AI 알림 및 방문 예정 브리핑 생성 파이프라인 성공 완료!")
         except Exception as ne:
             logger.error(f"[PIPELINE_ERROR] 알림 파이프라인 생성 실패: {ne}", exc_info=True)
+
+        return {
+            "status": "success",
+            "u_id": u_id,
+            "date": date_str,
+            "retry_count": final_state.get("retry_count"),
+            "goal": goal_info.get("goal"),
+            "reason": goal_info.get("reason"),
+            "plan_tools": plan_tools,
+            "evaluation": {
+                "is_passed": eval_info.get("is_passed"),
+                "feedback": eval_info.get("feedback")
+            },
+            "reflection_guidance": final_state.get("reflection_guidance"),
+            "execution_results": [
+                {
+                    "category": item.get("category"),
+                    "title": item.get("title"),
+                    "execution_date": str(item.get("execution_date")),
+                    "c_id": item.get("c_id"),
+                    "memo": item.get("memo")
+                } for item in execution_results
+            ],
+            "saved_info": saved_info
+        }
             
     except Exception as e:
         logger.error(f"[ERROR] 에이전트 구동 실패: {str(e)}", exc_info=True)
+        raise e
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AI To Do Goal-driven Agent Runner")

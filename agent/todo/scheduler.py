@@ -43,10 +43,11 @@ def run_todo_agent_for_all_pbs(date_str: str = None):
     """
     모든 재직 중인 PB에 대해 AI To Do 추천 일정 생성 에이전트를 가동합니다.
     """
+    from main import run_agent_for_pb
     logger.info("⏰ [Scheduler Trigger] AI To Do 생성 배치가 개시되었습니다.")
     
-    agent = build_todo_agent()
     today_str = date_str or datetime.now().strftime("%Y-%m-%d")
+    reports = []
 
     try:
         with get_db_session() as db:
@@ -57,29 +58,31 @@ def run_todo_agent_for_all_pbs(date_str: str = None):
             for pb in pb_users:
                 logger.info(f"🚀 [PB 가동] u_id: {pb.u_id} ({pb.name} {pb.position}) 추천 일정 생성 에이전트 구동")
                 
-                # LangGraph 초기 상태 설정
-                initial_state = {
-                    "u_id": pb.u_id,
-                    "target_date": today_str,
-                    "retry_count": 0,
-                    "reflection_guidance": None,
-                    "evaluation": {"is_passed": False}
-                }
-
                 # 에이전트 실행
                 try:
-                    final_state = agent.invoke(initial_state)
-                    eval_res = final_state.get("evaluation", {})
-                    if eval_res.get("is_passed", False):
+                    report = run_agent_for_pb(pb.u_id, today_str)
+                    reports.append(report)
+                    if report.get("status") == "success":
                         logger.info(f"✅ [성공] PB '{pb.name}'의 추천 일정이 최종 검증을 통과하여 DB에 저장되었습니다.")
                     else:
-                        logger.warning(f"⚠️ [제한적 종료] PB '{pb.name}' 에이전트가 완벽히 검증되지 않고 종료되었습니다. (사유: {eval_res.get('feedback')})")
+                        logger.warning(f"⚠️ [제한적 종료] PB '{pb.name}' 에이전트가 실패 혹은 보완 종료되었습니다.")
                 except Exception as e:
                     logger.error(f"❌ [에러] PB '{pb.name}' 구동 중 치명적 오류 발생: {str(e)}", exc_info=True)
+                    reports.append({
+                        "status": "error",
+                        "u_id": pb.u_id,
+                        "pb_name": pb.name,
+                        "error": str(e)
+                    })
                     
         logger.info("⏰ [Scheduler 완료] 모든 PB 대상 AI To-Do 생성 배치가 성황리에 마무리되었습니다.")
     except Exception as e:
         logger.error(f"❌ [에러] 스케줄러 배치 구동 중 예외 발생: {str(e)}")
+        reports.append({
+            "status": "error",
+            "error": f"스케줄러 배치 구동 중 예외 발생: {str(e)}"
+        })
+    return reports
 
 def start_scheduler():
     """
