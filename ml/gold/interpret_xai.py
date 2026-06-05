@@ -1,6 +1,7 @@
 import os
 import base64
 import pandas as pd
+import pymysql
 from dotenv import load_dotenv, find_dotenv
 
 try:

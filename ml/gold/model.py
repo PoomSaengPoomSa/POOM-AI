@@ -1,8 +1,10 @@
 import xgboost as xgb
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from catboost import CatBoostClassifier
 
 class GoldModel:
     """
-    금값 상승/하락 방향 예측을 위한 XGBoost 이진 분류 모델
+    금값 상승/하락 방향 예측을 위한 앙상블(XGBoost + RandomForest + CatBoost) 이진 분류 모델
     - 클래스: 하락/보합(0), 상승(1)
     """
 
@@ -22,8 +24,8 @@ class GoldModel:
         self.classifier = self._build_classifier()
 
     def _build_classifier(self):
-        """그리드 서치로 튜닝된 최적 하이퍼파라미터 적용 XGBoost 모델 생성"""
-        return xgb.XGBClassifier(
+        """XGBoost, RandomForest, CatBoost로 구성된 Soft Voting 앙상블 분류기 빌드"""
+        xgb_clf = xgb.XGBClassifier(
             n_estimators=180,
             learning_rate=0.005,
             max_depth=3,
@@ -35,6 +37,33 @@ class GoldModel:
             random_state=self.random_state,
             eval_metric='logloss'
         )
+
+        class_weight = {0: 1.0, 1: self.scale_pos_weight}
+        rf_clf = RandomForestClassifier(
+            n_estimators=150,
+            max_depth=4,
+            class_weight=class_weight,
+            random_state=self.random_state
+        )
+
+        cat_clf = CatBoostClassifier(
+            iterations=150,
+            learning_rate=0.01,
+            depth=4,
+            scale_pos_weight=self.scale_pos_weight,
+            random_state=self.random_state,
+            verbose=0
+        )
+
+        ensemble = VotingClassifier(
+            estimators=[
+                ('xgb', xgb_clf),
+                ('rf', rf_clf),
+                ('cat', cat_clf)
+            ],
+            voting='soft'
+        )
+        return ensemble
 
     def get_classifier(self):
         return self.classifier

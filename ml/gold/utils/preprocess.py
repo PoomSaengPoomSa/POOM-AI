@@ -156,8 +156,11 @@ def preprocess():
         'gold_change_rate_std_5', 'gold_change_rate_std_20'
     ]
 
-    # 8. Create Target Variables (Shift by -1 day)
-    df['target_tomorrow_gold_change_rate'] = df['gold_change_rate'].shift(-1)
+    # 8. Create Target Variables (Next week average price vs Today price)
+    # T 시점에서 미래 T+1 ~ T+5 영업일의 금 가격 평균 산출
+    df['next_week_avg_gold'] = pd.concat([df['gold'].shift(-i) for i in range(1, 6)], axis=1).mean(axis=1)
+    # 다음 주 평균 가격이 오늘 가격보다 높은지 변동률 및 이진 분류 방향성 타겟 설정
+    df['target_tomorrow_gold_change_rate'] = (df['next_week_avg_gold'] - df['gold']) / df['gold']
     df['target_tomorrow_gold_direction'] = (df['target_tomorrow_gold_change_rate'] > 0).astype(int)
 
     # Clean up NaNs due to shift, rolling, and lags
@@ -216,6 +219,8 @@ def preprocess():
             print("   DB Connection successful!")
             
             with connection.cursor() as cursor:
+                # Metadata Lock 무한 대기를 차단하기 위해 5초 락 타임아웃 설정
+                cursor.execute("SET innodb_lock_wait_timeout = 5")
                 table_name = "ml_gold_preprocessed"
                 
                 # Drop existing table
