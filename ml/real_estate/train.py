@@ -15,10 +15,6 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
 if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-
-GENERATE_REPORT = True  # 테스트 중엔 False, 운영 시 True로 변경
-
-
 def save_prediction_to_mysql(predicted_value, predicted_index, run_id):
     import pymysql
     load_dotenv(find_dotenv())
@@ -65,151 +61,6 @@ def save_prediction_to_mysql(predicted_value, predicted_index, run_id):
         print(f"[Error] Failed to save realestate predictions to MySQL: {e}")
 
 
-def generate_and_save_realestate_report(predicted_value, predicted_index, run_id):
-    if not GENERATE_REPORT:
-        print("[LLM] GENERATE_REPORT is set to False. Skipping LLM report generation for Real Estate.")
-        return
-        
-    load_dotenv(find_dotenv())
-    openai_key = os.getenv("OPENAI_API_KEY")
-    DB_USER = os.getenv('DB_USER')
-    DB_PASSWORD = os.getenv('DB_PASSWORD')
-    DB_HOST = os.getenv('DB_HOST')
-    DB_PORT = os.getenv('DB_PORT')
-    DB_NAME = os.getenv('DB_NAME')
-    
-    if not openai_key:
-        print("[Warning] Missing OPENAI_API_KEY. Skipping LLM report generation.")
-        return
-    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
-        print("[Warning] Missing DB config. Skipping LLM report generation.")
-        return
-        
-    # 1. Fetch latest actual realestate index
-    re_today = None
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=int(DB_PORT),
-            charset='utf8mb4'
-        )
-        try:
-            with connection.cursor() as cursor:
-                sql = "SELECT house_price_idx FROM ml_realestate_raw ORDER BY date_ym DESC LIMIT 1"
-                cursor.execute(sql)
-                res = cursor.fetchone()
-                if res:
-                    re_today = float(res[0])
-        finally:
-            connection.close()
-    except Exception as e:
-        print(f"[Warning] Failed to fetch latest actual index for LLM: {e}")
-        
-    # 2. Call OpenAI API using standard urllib
-    import urllib.request
-    import json
-    
-    prompt = f"""
-    부동산 가격지수 AI 예측 모델 분석 결과:
-    - 이번달 실제 가격지수(re_today): {f'{re_today:.2f}' if re_today is not None else '데이터 없음'}
-    - 다음달 예측 변동률: {predicted_value:.2f}%
-    - 다음달 예측 환산 가격지수(predicted_index): {f'{predicted_index:.2f}' if predicted_index is not None else '데이터 없음'}
-    - 주요 SHAP 변수 기여도 순위: 기준금리 (kr_base_rate, 40%), 소비자물가지수 (kr_cpi, 30%), 매수우위지수 (buyer_dominance, 20%), 주택담보대출금리 (kr_mortgage_rate, 10%)
-    
-    위 예측 데이터와 변수 기여도를 바탕으로 전문적이고 가독성이 높은 한국어 부동산 가격지수 전망 분석 리포트를 markdown 형식으로 작성해주세요.
-    반드시 다음의 구조와 예시 이미지의 격식과 톤앤매너를 유지해주세요:
-    
-    구조 예시:
-    ### [부동산 가격지수 분석 리포트]
-    
-    (여기에 부동산 시장 전망에 대한 한 줄 요약을 적어주세요. 예: 서울 아파트 시장의 회복세를 지지할 것으로 보입니다...)
-    
-    **1. (첫 번째 핵심 요인 제목)**
-    (상승 혹은 하락을 이끄는 첫 번째 핵심 변수와 AI 분석 기여도를 엮어서 상세한 설명 한 단락을 작성해주세요.)
-    
-    **2. (두 번째 핵심 요인 제목)**
-    (상승 혹은 하락을 이끄는 두 번째 핵심 변수와 AI 분석 기여도를 엮어서 상세한 설명 한 단락을 작성해주세요.)
-    
-    요구사항:
-    - 마크다운 형식으로 작성할 것.
-    - 너무 길지 않게 핵심 요약 위주로 작성할 것 (전체 400자 내외).
-    """
-    
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {openai_key}"
-    }
-    data = {
-        "model": "gpt-4o",
-        "messages": [
-            {"role": "system", "content": "You are a professional economic analyst. Always respond in Korean markdown format. Keep it concise, engaging, and professional."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
-    }
-    
-    content = None
-    try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode("utf-8"),
-            headers=headers,
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=30) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
-            content = res_data["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"[Error] Failed to generate LLM report via OpenAI: {e}")
-        return
-        
-    if not content:
-        print("[Warning] Generated LLM report is empty.")
-        return
-        
-    # 3. Save to trend_llm_report table (Cumulative Insert with 16-character UUID)
-    import uuid
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=int(DB_PORT),
-            charset='utf8mb4'
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS trend_llm_report (
-                    report_id VARCHAR(50) NOT NULL PRIMARY KEY,
-                    type VARCHAR(50) NOT NULL,
-                    model_name VARCHAR(50) NOT NULL,
-                    language VARCHAR(10) NOT NULL,
-                    content TEXT NOT NULL,
-                    status VARCHAR(20) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    data_source VARCHAR(255)
-                )
-                """)
-                
-                # 16-character UUID prefix as report ID
-                report_id = f"rpt_{uuid.uuid4().hex[:16]}"
-                sql = """
-                INSERT INTO trend_llm_report (report_id, type, model_name, language, content, status, created_at, data_source)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
-                """
-                cursor.execute(sql, (report_id, "real_estate", "gpt-4o", "ko", content, "done", "ECOS, K-RealEstate"))
-            connection.commit()
-            print("[DB] Successfully generated and saved Real Estate LLM report into MySQL trend_llm_report table.")
-        finally:
-            connection.close()
-    except Exception as e:
-        print(f"[Error] Failed to save Real Estate LLM report to MySQL: {e}")
 
 
 def save_performance_to_mysql(rmse, r2_score, mae, mse, run_id=None):
@@ -303,7 +154,7 @@ def get_latest_actual_realestate_index():
     return None
 
 
-def run_train():
+def run_train(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
     load_dotenv(find_dotenv())
@@ -315,7 +166,7 @@ def run_train():
     with mlflow.start_run():
  
         # Preprocess
-        data = preprocess_data(vif_threshold=20.0)
+        data = preprocess_data(vif_threshold=20.0, valid_mode=valid_mode)
         if data is None:
             print("[Error] Preprocessing failed.")
             return
@@ -330,6 +181,9 @@ def run_train():
         # MLflow - 전처리 파라미터 기록
         train_df = data['train_df']
         test_df = data['test_df']
+        eval_name = "Validation" if valid_mode else "Test"
+
+        mlflow.log_param("valid_mode", str(valid_mode))
         mlflow.log_param("train_start", train_df['date_ym'].min())
         mlflow.log_param("train_end", train_df['date_ym'].max())
         mlflow.log_param("test_start", test_df['date_ym'].min())
@@ -373,10 +227,10 @@ def run_train():
         mlflow.log_metric("test_rmse", test_rmse)
 
         print("\n" + "=" * 55)
-        print("  Real Estate Ensemble - Train / Test Performance")
+        print(f"  Real Estate Ensemble - Train / {eval_name} Performance")
         print("=" * 55)
         print(f"   [Train]  R2: {train_r2:.4f} | MAE: {train_mae:.4f}% | RMSE: {train_rmse:.4f}")
-        print(f"   [Test ]  R2: {test_r2:.4f} | MAE: {test_mae:.4f}% | RMSE: {test_rmse:.4f}")
+        print(f"   [{eval_name} ]  R2: {test_r2:.4f} | MAE: {test_mae:.4f}% | RMSE: {test_rmse:.4f}")
         print("=" * 55 + "\n")
 
         # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
@@ -403,7 +257,6 @@ def run_train():
         # 테스트셋 성능을 DB에 저장 (gold/base_rate와 동일한 방식)
         save_performance_to_mysql(rmse=test_rmse, r2_score=test_r2, mae=test_mae, mse=test_mse, run_id=run_id_val)
         save_prediction_to_mysql(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
-        generate_and_save_realestate_report(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
  
         # Setup directories and save
         models_dir = os.path.join(base_dir, 'models')
@@ -436,4 +289,9 @@ def run_train():
         print(f"  Features size : {len(selected_features)}")
  
 if __name__ == '__main__':
-    run_train()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode: train on train, validate on valid, do not use test.')
+    args = parser.parse_known_args()[0]
+    
+    run_train(valid_mode=args.valid)

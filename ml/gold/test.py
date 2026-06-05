@@ -80,7 +80,7 @@ def load_data_from_mysql():
             return df
         raise RuntimeError(f"Database connection failed and local CSV not found at: {csv_path}")
 
-def test_model():
+def test_model(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir = os.path.join(base_dir, 'models')
     results_dir = os.path.join(base_dir, 'results')
@@ -98,12 +98,18 @@ def test_model():
     X_all = df[feature_names]
     y_all = df['target_tomorrow_gold_direction']
 
-    # Train/Test Split Masks (Fixed Date Split)
+    # Train/Validation/Test Split Masks (Fixed Date Split)
     df['loaded_date'] = df['loaded_date'].astype(str).str.strip()
-    train_mask = df['loaded_date'] <= cfg.TRAIN_END
-    test_mask  = df['loaded_date'] >= cfg.TEST_START
+    if valid_mode:
+        train_mask = df['loaded_date'] <= cfg.TRAIN_END
+        eval_mask  = df['loaded_date'].between(cfg.VALID_START, cfg.VALID_END)
+        eval_name  = "Validation"
+    else:
+        train_mask = df['loaded_date'] <= cfg.VALID_END
+        eval_mask  = df['loaded_date'].between(cfg.TEST_START, cfg.TEST_END)
+        eval_name  = "Test"
     
-    print(f"   Total: {len(df)} days | Train: {train_mask.sum()} days | Test: {test_mask.sum()} days")
+    print(f"   Total: {len(df)} days | Train: {train_mask.sum()} days | {eval_name}: {eval_mask.sum()} days")
 
     # 2. Standardization
     X_all_scaled = scaler.transform(X_all)
@@ -115,30 +121,30 @@ def test_model():
     proba = classifier.predict_proba(X_all_scaled_df)
 
     tr_acc = accuracy_score(y_all[train_mask], preds[train_mask])
-    te_acc = accuracy_score(y_all[test_mask], preds[test_mask])
+    eval_acc = accuracy_score(y_all[eval_mask], preds[eval_mask])
 
     print(f"\n{'='*55}")
-    print("[TEST] Gold Prediction Test Performance Summary")
+    print(f"[TEST] Gold Prediction {eval_name} Performance Summary")
     print(f"{'='*55}")
     print(f"   Train Hit Rate: {tr_acc*100:.2f}%")
-    print(f"   Test Hit Rate:  {te_acc*100:.2f}%")
+    print(f"   {eval_name} Hit Rate:  {eval_acc*100:.2f}%")
     
-    gap = (tr_acc - te_acc) * 100
+    gap = (tr_acc - eval_acc) * 100
     if gap > 15:
         print(f"   [WARNING] Overfitting suspected (Gap: {gap:.2f}%p)")
     else:
         print(f"   [OK] No severe overfitting (Gap: {gap:.2f}%p)")
         
-    print(f"\n[REPORT] Detailed Test Classification Report")
+    print(f"\n[REPORT] Detailed {eval_name} Classification Report")
     print(classification_report(
-        y_all[test_mask], preds[test_mask],
+        y_all[eval_mask], preds[eval_mask],
         labels=[0, 1], target_names=label_names, zero_division=0
     ))
 
     # 4. Save Prediction Results
     result_df = pd.DataFrame({
         'loaded_date':       df['loaded_date'].values,
-        'split':             np.where(train_mask, 'train', 'test'),
+        'split':             np.where(train_mask, 'train', 'eval'),
         'actual_direction':  df['target_tomorrow_gold_direction'].values,
         'pred_direction':    preds,
         'pred_proba_down':   proba[:, 0],
@@ -146,32 +152,33 @@ def test_model():
         'match':             y_all.values == preds,
     })
     
-    test_result = result_df[result_df['split'] == 'test']
-    save_path = os.path.join(results_dir, 'test_result.csv')
-    test_result.to_csv(save_path, index=False, encoding='utf-8-sig')
-    print(f"   Saved test prediction results to: {save_path}")
+    eval_result = result_df[result_df['split'] == 'eval']
+    save_path = os.path.join(results_dir, f'{eval_name.lower()}_result.csv')
+    eval_result.to_csv(save_path, index=False, encoding='utf-8-sig')
+    print(f"   Saved {eval_name.lower()} prediction results to: {save_path}")
 
     # Calculate exhaustive metrics
     tr_f1_macro = f1_score(y_all[train_mask], preds[train_mask], average='macro', zero_division=0)
-    te_f1_macro = f1_score(y_all[test_mask], preds[test_mask], average='macro', zero_division=0)
+    eval_f1_macro = f1_score(y_all[eval_mask], preds[eval_mask], average='macro', zero_division=0)
     tr_f1_weighted = f1_score(y_all[train_mask], preds[train_mask], average='weighted', zero_division=0)
-    te_f1_weighted = f1_score(y_all[test_mask], preds[test_mask], average='weighted', zero_division=0)
+    eval_f1_weighted = f1_score(y_all[eval_mask], preds[eval_mask], average='weighted', zero_division=0)
 
     tr_prec_macro = precision_score(y_all[train_mask], preds[train_mask], average='macro', zero_division=0)
-    te_prec_macro = precision_score(y_all[test_mask], preds[test_mask], average='macro', zero_division=0)
+    eval_prec_macro = precision_score(y_all[eval_mask], preds[eval_mask], average='macro', zero_division=0)
     tr_rec_macro = recall_score(y_all[train_mask], preds[train_mask], average='macro', zero_division=0)
-    te_rec_macro = recall_score(y_all[test_mask], preds[test_mask], average='macro', zero_division=0)
+    eval_rec_macro = recall_score(y_all[eval_mask], preds[eval_mask], average='macro', zero_division=0)
 
     try:
         tr_auc = roc_auc_score(y_all[train_mask], proba[train_mask, 1])
-        te_auc = roc_auc_score(y_all[test_mask], proba[test_mask, 1])
+        eval_auc = roc_auc_score(y_all[eval_mask], proba[eval_mask, 1])
     except Exception:
         tr_auc = np.nan
-        te_auc = np.nan
+        eval_auc = np.nan
 
+    train_label_str = "Train" if valid_mode else "Train+Valid"
     metrics = pd.DataFrame([
         {
-            '구분': 'Train',
+            '구분': train_label_str,
             'Accuracy(%)': round(tr_acc*100, 2),
             'F1_Macro': round(tr_f1_macro, 4),
             'F1_Weighted': round(tr_f1_weighted, 4),
@@ -180,13 +187,13 @@ def test_model():
             'AUC_ROC': round(tr_auc, 4) if not np.isnan(tr_auc) else 'N/A'
         },
         {
-            '구분': 'Test',
-            'Accuracy(%)': round(te_acc*100, 2),
-            'F1_Macro': round(te_f1_macro, 4),
-            'F1_Weighted': round(te_f1_weighted, 4),
-            'Precision_Macro': round(te_prec_macro, 4),
-            'Recall_Macro': round(te_rec_macro, 4),
-            'AUC_ROC': round(te_auc, 4) if not np.isnan(te_auc) else 'N/A'
+            '구분': eval_name,
+            'Accuracy(%)': round(eval_acc*100, 2),
+            'F1_Macro': round(eval_f1_macro, 4),
+            'F1_Weighted': round(eval_f1_weighted, 4),
+            'Precision_Macro': round(eval_prec_macro, 4),
+            'Recall_Macro': round(eval_rec_macro, 4),
+            'AUC_ROC': round(eval_auc, 4) if not np.isnan(eval_auc) else 'N/A'
         }
     ])
     
@@ -199,12 +206,12 @@ def test_model():
     fig = plt.figure(figsize=(18, 12))
     gs = gridspec.GridSpec(2, 3, hspace=0.35, wspace=0.35)
 
-    # ── Panel 1: Train vs Test Accuracy ──
+    # ── Panel 1: Train vs Eval Accuracy ──
     ax1 = fig.add_subplot(gs[0, 0])
-    bars = ax1.bar(['Train', 'Test'], [tr_acc*100, te_acc*100], width=0.45,
+    bars = ax1.bar([train_label_str, eval_name], [tr_acc*100, eval_acc*100], width=0.45,
                    color=['#3A6073', '#FF5F6D'], edgecolor='white', linewidth=1)
     ax1.set_ylabel('예측 정확도 (Hit Rate, %)', fontsize=11)
-    ax1.set_title('Train vs Test 성능 비교', fontsize=13, fontweight='bold', pad=15)
+    ax1.set_title(f'{train_label_str} vs {eval_name} 성능 비교', fontsize=13, fontweight='bold', pad=15)
     ax1.set_ylim(0, 105)
     for bar in bars:
         ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
@@ -217,7 +224,7 @@ def test_model():
 
     # ── Panel 2: Confusion Matrix Heatmap ──
     ax2 = fig.add_subplot(gs[0, 1])
-    cm = confusion_matrix(y_all[test_mask], preds[test_mask])
+    cm = confusion_matrix(y_all[eval_mask], preds[eval_mask])
     im = ax2.imshow(cm, cmap='Blues', aspect='auto', interpolation='nearest')
     ax2.set_xticks([0, 1])
     ax2.set_yticks([0, 1])
@@ -225,7 +232,7 @@ def test_model():
     ax2.set_yticklabels(['하락/보합', '상승'], fontsize=11)
     ax2.set_xlabel('예측 방향', fontsize=11, labelpad=10)
     ax2.set_ylabel('실제 방향', fontsize=11, labelpad=10)
-    ax2.set_title('혼동 행렬 (Confusion Matrix - Test)', fontsize=13, fontweight='bold', pad=15)
+    ax2.set_title(f'혼동 행렬 (Confusion Matrix - {eval_name})', fontsize=13, fontweight='bold', pad=15)
     
     # Write values in heatmap
     thresh = cm.max() / 2.
@@ -240,23 +247,23 @@ def test_model():
     # ── Panel 3: Performance Cards ──
     ax3 = fig.add_subplot(gs[0, 2])
     ax3.axis('off')
-    report = classification_report(y_all[test_mask], preds[test_mask], output_dict=True)
-    correct_count = (y_all[test_mask].values == preds[test_mask]).sum()
-    total_count = test_mask.sum()
+    report = classification_report(y_all[eval_mask], preds[eval_mask], output_dict=True)
+    correct_count = (y_all[eval_mask].values == preds[eval_mask]).sum()
+    total_count = eval_mask.sum()
     
     info_lines = [
-        ('최종 테스트 정확도', f"{te_acc*100:.2f}%"),
+        (f'최종 {eval_name} 정확도', f"{eval_acc*100:.2f}%"),
         ('', ''),
         ('상승(1) F1-Score', f"{report['1']['f1-score']:.4f}"),
         ('하락(0) F1-Score', f"{report['0']['f1-score']:.4f}"),
-        ('Macro F1-Score', f"{te_f1_macro:.4f}"),
-        ('Test AUC-ROC 스코어', f"{te_auc:.4f}" if not np.isnan(te_auc) else 'N/A'),
+        ('Macro F1-Score', f"{eval_f1_macro:.4f}"),
+        (f'{eval_name} AUC-ROC 스코어', f"{eval_auc:.4f}" if not np.isnan(eval_auc) else 'N/A'),
         ('', ''),
         ('정답 개수', f"{correct_count} / {total_count} 거래일"),
     ]
     
     y_start = 0.88
-    ax3.text(0.5, 0.96, '금값 예측 테스트 핵심 지표', transform=ax3.transAxes,
+    ax3.text(0.5, 0.96, f'금값 예측 {eval_name} 핵심 지표', transform=ax3.transAxes,
              fontsize=14, fontweight='bold', ha='center', va='top')
              
     for i, (label, value) in enumerate(info_lines):
@@ -276,7 +283,7 @@ def test_model():
     
     # Filter for the last 60 days
     last_n = 60
-    timeline_df = test_result.tail(last_n)
+    timeline_df = eval_result.tail(last_n)
     
     dates = timeline_df['loaded_date'].values
     actual = timeline_df['actual_direction'].values
@@ -321,11 +328,15 @@ def test_model():
     ax4.set_ylim(-1.5, 1.5)
     ax4.grid(axis='y', alpha=0.2, linestyle='--')
 
-    fig_path = os.path.join(results_dir, 'test_dashboard.png')
+    fig_path = os.path.join(results_dir, f'{eval_name.lower()}_dashboard.png')
     plt.savefig(fig_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     
     print(f"\n[OK] Evaluation completed. Dashboard saved at: {fig_path}")
 
 if __name__ == '__main__':
-    test_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--valid', action='store_true', help='Validation mode')
+    args = parser.parse_known_args()[0]
+    test_model(valid_mode=args.valid)

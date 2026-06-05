@@ -10,8 +10,11 @@ class GoldModel:
     DROP_COLS = ['loaded_date', 'target_tomorrow_gold_change_rate', 'target_tomorrow_gold_direction']
 
     # 시계열 분할 기준 (특정 시점 고정 분할)
-    TRAIN_END  = '2025-04-30'
-    TEST_START = '2025-05-01'
+    TRAIN_END    = '2024-03-31'
+    VALID_START  = '2024-04-01'
+    VALID_END    = '2025-03-31'
+    TEST_START   = '2025-04-01'
+    TEST_END     = '2026-03-31'
 
     def __init__(self, random_state=42, scale_pos_weight=1.0):
         self.random_state = random_state

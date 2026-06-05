@@ -3,7 +3,7 @@
 - 금리 동결 확률: {prob_freeze_pct:.1f}%
 - 금리 인상 확률: {prob_hike_pct:.1f}%
 - 최신 실제 기준금리: {latest_br_val_str}
-- 주요 SHAP 변수 기여도 순위: 소비자물가지수 (kr_cpi, 45%), 미국 기준금리 (us_base_rate, 35%), 가계대출 증가율 (household_debt_growth, 12%), GDP 성장률 (gdp_growth, 8%)
+- 주요 SHAP 변수 기여도 순위 (AI 실시간 분석): {shap_rank_str}
 
 위 예측 데이터와 변수 기여도를 바탕으로 전문적이고 가독성이 높은 한국어 기준금리 전망 분석 리포트를 markdown 형식으로 작성해주세요.
 반드시 다음의 구조와 예시 이미지의 격식과 톤앤매너를 유지해주세요:

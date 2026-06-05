@@ -5,13 +5,15 @@ from catboost import CatBoostRegressor
 
 class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
     # 시계열 분할 기준 (특정 시점 고정 분할)
-    TRAIN_END  = '202504'
-    TEST_START = '202505'
+    TRAIN_END    = '202403'
+    VALID_START  = '202404'
+    VALID_END    = '202503'
+    TEST_START   = '202504'
+    TEST_END     = '202603'
 
     def __init__(self, random_state=42):
         self.random_state = random_state
         
-        # We select only the Top 3 Champion Models from the tournament to maximize performance:
         # 1. Supreme Bagging Model (ExtraTrees)
         self.et = ExtraTreesRegressor(
             n_estimators=150,
@@ -30,7 +32,7 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
             n_jobs=-1
         )
         
-        # 3. Robust Symmetric Boosting Model (CatBoost)
+        # 3. Robust Symmetric Boosting Model (CatBoost) - Optuna tuned
         self.cat = CatBoostRegressor(
             iterations=150,
             learning_rate=0.03,
@@ -47,7 +49,7 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
         }
         
     def fit(self, X, y):
-        print("\n  [Production-Grade 3-Model Ensemble Training (Tree Dream Team)]")
+        print("\n  [Production-Grade 3-Model Ensemble Training (ET + RF + CatBoost)]")
         for name, model in self.models.items():
             print(f"    - Training {name}...")
             model.fit(X, y)
@@ -55,9 +57,7 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
         return self
         
     def predict(self, X):
-        # Weighted average of the Top 3 Champions:
         # ExtraTrees (40%), RandomForest (40%), CatBoost (20%)
-        # Sum of weights = 1.0.
         preds = []
         weights = [0.40, 0.40, 0.20]
         
@@ -72,3 +72,4 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
         for name, model in self.models.items():
             preds[name] = model.predict(X)
         return preds
+

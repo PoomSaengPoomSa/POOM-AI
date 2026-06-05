@@ -113,7 +113,7 @@ def filter_features_by_vif(df, features, threshold=5.0, max_features=6):
     return current_features
 
 
-def preprocess_data(vif_threshold=5.0):
+def preprocess_data(vif_threshold=5.0, valid_mode=False):
     # MySQL에서 직접 데이터 로드
     df = load_data_from_mysql()
     df = df.dropna(subset=["house_price_idx"]).copy()
@@ -176,19 +176,25 @@ def preprocess_data(vif_threshold=5.0):
     # Train/Test split (Fixed Date Split)
     from model import RealEstateEnsembleRegressor as cfg
     df['date_ym'] = df['date_ym'].astype(str).str.strip()
-    train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
-    test_df  = df[df['date_ym'] >= cfg.TEST_START].copy()
+    if valid_mode:
+        train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
+        test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+        eval_name = "Validation"
+    else:
+        train_df = df[df['date_ym'] <= cfg.VALID_END].copy()
+        test_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
+        eval_name = "Test"
 
     # 모델 학습/평가 세트 추출 시에만 TARGET 결측치를 드롭함
     train_clean = train_df.dropna(subset=[TARGET]).copy()
     test_clean  = test_df.dropna(subset=[TARGET]).copy()
 
     print("=" * 55)
-    print("Data Preprocessing & Train/Test Splitting")
+    print(f"Data Preprocessing & Train/{eval_name} Splitting")
     print("=" * 55)
     print(f"  Total samples (raw)     : {len(df)}")
     print(f"  Train period (clean)    : {train_clean['date_ym'].min()} ~ {train_clean['date_ym'].max()} ({len(train_clean)} months)")
-    print(f"  Test period (clean)     : {test_clean['date_ym'].min()} ~ {test_clean['date_ym'].max()} ({len(test_clean)} months)")
+    print(f"  {eval_name} period (clean)     : {test_clean['date_ym'].min()} ~ {test_clean['date_ym'].max()} ({len(test_clean)} months)")
 
     selected_features = filter_features_by_vif(train_clean, candidate_features, threshold=vif_threshold, max_features=6)
 

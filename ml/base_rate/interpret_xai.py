@@ -39,8 +39,12 @@ def save_report_to_mysql(content, summary, report_type):
                 )
                 """)
                 sql = """
-                INSERT INTO trend_llm_report (type, content, summary)
-                VALUES (%s, %s, %s)
+                INSERT INTO trend_llm_report (report_id, type, content, summary)
+                VALUES (3, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    content = VALUES(content),
+                    summary = VALUES(summary),
+                    created_at = CURRENT_TIMESTAMP
                 """
                 cursor.execute(sql, (report_type, content, summary))
             connection.commit()
@@ -79,9 +83,17 @@ def interpret_xai():
     try:
         df = pd.read_csv(csv_path)
         csv_text = df.head(15).to_csv(index=False)
+        # 동적 SHAP 기여도 순위 문자열 생성 (Top 4)
+        top4 = df.head(4)
+        total_imp = top4['importance'].sum()
+        shap_rank_str = ", ".join(
+            f"{row['feature_kr']} ({row['feature']}, {int(round(row['importance'] / total_imp * 100))}%)"
+            for _, row in top4.iterrows()
+        )
     except Exception as e:
         print(f"[ERROR] 중요도 CSV 로드 실패: {e}")
         csv_text = "데이터 없음"
+        shap_rank_str = "데이터 없음"
 
     misclass_csv_path = os.path.join(results_dir, 'misclassification_analysis.csv')
     misclass_text = ""
@@ -152,7 +164,14 @@ def interpret_xai():
             max_tokens=3000, # 워터폴 분석까지 포함되므로 토큰 여유를 조금 더 줍니다.
             temperature=0.3
         )
-        result_text = response.choices[0].message.content
+        result_text = response.choices[0].message.content.strip()
+        if result_text.startswith("```"):
+            lines = result_text.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            result_text = "\n".join(lines).strip()
 
         # 4. 결과 저장
         output_path = os.path.join(results_dir, 'interpret_result.md')
@@ -228,7 +247,8 @@ def interpret_xai():
             prob_cut_pct=prob_cut_pct,
             prob_freeze_pct=prob_freeze_pct,
             prob_hike_pct=prob_hike_pct,
-            latest_br_val_str=latest_br_val_str
+            latest_br_val_str=latest_br_val_str,
+            shap_rank_str=shap_rank_str
         )
         
         summary_messages = [
