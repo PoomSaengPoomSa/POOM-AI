@@ -39,14 +39,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AI_ToDo_Scheduler")
 
-def run_todo_agent_for_all_pbs():
+def run_todo_agent_for_all_pbs(date_str: str = None):
     """
     모든 재직 중인 PB에 대해 AI To Do 추천 일정 생성 에이전트를 가동합니다.
     """
-    logger.info("⏰ [Scheduler Trigger] 오전 06:00 AI To Do 생성 배치가 개시되었습니다.")
+    logger.info("⏰ [Scheduler Trigger] AI To Do 생성 배치가 개시되었습니다.")
     
     agent = build_todo_agent()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = date_str or datetime.now().strftime("%Y-%m-%d")
 
     try:
         with get_db_session() as db:
