@@ -52,3 +52,4 @@ plots/
 /llm/consult_assist/data/
 /agent/simulator/data/history/
 /agent/simulator/data/chroma_db/
+/agent/simulator/data/*.json

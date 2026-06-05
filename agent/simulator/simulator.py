@@ -368,7 +368,7 @@ def generate_answer_node(state: SimulatorState) -> Dict[str, Any]:
         history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": answer})
         
-        data_dir = os.path.join(current_dir, "data")
+        data_dir = os.path.join(current_dir, "data/history")
         history_path = os.path.join(data_dir, f"customer_{customer_id}_history.json")
         
         os.makedirs(data_dir, exist_ok=True)
