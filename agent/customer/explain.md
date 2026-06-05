@@ -107,15 +107,15 @@ LANGSMITH_PROJECT="poom-customer_agent"
 
 * **전체 고객에 대한 분석 실행**:
   ```powershell
-  .venv/Scripts/python -m agent.customer.run_feature
+  .venv/Scripts/python -m agent.customer.main
   ```
 
 * **특정 고객(예: 1001번, 1002번)만 수동 지정하여 실행**:
   ```powershell
-  .venv/Scripts/python -m agent.customer.run_feature --c_id 1001,1002
+  .venv/Scripts/python -m agent.customer.main --c_id 1001,1002
   ```
 
 * **사용할 LLM 모델명을 변경하여 실행** (기본값: `gpt-4o-mini`):
   ```powershell
-  .venv/Scripts/python -m agent.customer.run_feature --c_id 1001 --model gpt-4o
+  .venv/Scripts/python -m agent.customer.main --c_id 1001 --model gpt-4o
   ```
