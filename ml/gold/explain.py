@@ -36,6 +36,7 @@ def save_contributions_to_mysql(features, shap_values):
     
     # 2. Map to base variable names
     base_mapping = {
+        "gold": "gold",
         "dxy_proxy": "dxy_proxy",
         "kr_cpi": "kr_cpi",
         "kr_usd_exchange": "kr_usd_exchange",
