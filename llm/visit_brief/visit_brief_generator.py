@@ -258,6 +258,11 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
     start_of_today = datetime.combine(target_date, datetime.min.time())
     end_of_today = datetime.combine(target_date, datetime.max.time())
     
+    from datetime import timezone, timedelta
+    kst_tz = timezone(timedelta(hours=9))
+    kst_now = datetime.now(kst_tz)
+    kst_time = kst_now.time()
+    
     from contextlib import nullcontext
     db_context = nullcontext(db) if db is not None else get_db()
     should_commit = db is None
@@ -291,7 +296,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                 
                 if not dup:
                     new_noti = Notification(
-                        created_time=datetime.combine(target_date, datetime.now().time()),
+                        created_time=datetime.combine(target_date, kst_time),
                         title=f"{c.name} 고객 생일 축하 연락 제안",
                         content=f"오늘 생일을 맞이한 {c.name} 고객님께 친근한 축하 문자 메시지 및 모바일 기프트 쿠폰 발송을 제안합니다.",
                         category="안부 연락",
@@ -324,7 +329,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                     
                     if not dup:
                         new_noti = Notification(
-                            created_time=datetime.combine(target_date, datetime.now().time()),
+                            created_time=datetime.combine(target_date, kst_time),
                             title=f"{cust.name} 고객 지인({rel.relationship_}) 생일 축하 제안",
                             content=f"오늘 {cust.name} 고객님의 지인({rel.relationship_}) 생일입니다. 고객님께 축하 메시지 및 안부 인사를 제안합니다.",
                             category="안부 연락",
@@ -347,7 +352,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                     
                     if not dup:
                         new_noti = Notification(
-                            created_time=datetime.combine(target_date, datetime.now().time()),
+                            created_time=datetime.combine(target_date, kst_time),
                             title=f"{cust.name} 고객 지인({rel.relationship_}) 결혼기념일 축하 제안",
                             content=f"오늘 {cust.name} 고객님의 지인({rel.relationship_}) 결혼기념일입니다. 고객님께 축하 메시지 및 안부 인사를 제안합니다.",
                             category="안부 연락",
@@ -390,7 +395,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                         remaining_days = (cp.expiration_date - target_date).days
                         d_day_str = f"D-{remaining_days}" if remaining_days > 0 else "금일 만기"
                         new_noti = Notification(
-                            created_time=datetime.combine(target_date, datetime.now().time()),
+                            created_time=datetime.combine(target_date, kst_time),
                             title=f"{c.name} 고객 {p.name} 만기({d_day_str}) 안내",
                             content=f"{c.name} 고객님이 보유 중인 [{p.name}] 상품의 만기일({cp.expiration_date})이 임박했습니다. 타행 이탈 방지를 위한 선제 상담을 권장합니다.",
                             category="만기 알림",
@@ -423,7 +428,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                     
                     if not dup:
                         new_noti = Notification(
-                            created_time=datetime.combine(target_date, datetime.now().time()),
+                            created_time=datetime.combine(target_date, kst_time),
                             title=f"{c.name} 고객 이탈 위험 주의 경보",
                             content=f"{c.name} 고객님의 이탈 위험 등급이 '위험' 단계로 감지되었습니다. 사유: {ch.reason}. 신속한 자산 흐름 파악 및 케어가 요구됩니다.",
                             category="이탈 위험",
@@ -450,11 +455,15 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
             if not c:
                 continue
                 
-            # 해당 확정일정에 대해 이미 브리핑 알림이 존재하는지 체크
+            # 해당 확정일정에 대해 이미 브리핑 알림이 존재하는지 체크 (s_id 매칭 혹은 동일 고객의 오늘 자 정상 브리핑 중복 생성 원천 방지)
             dup_briefing = db.query(Notification).filter(
                 Notification.u_id == u_id,
                 Notification.category == "방문 예정 브리핑",
-                Notification.s_id == s.s_id
+                (Notification.s_id == s.s_id) |
+                ((Notification.c_id == c.c_id) & 
+                 Notification.s_id.isnot(None) &
+                 (Notification.created_time >= start_of_today) & 
+                 (Notification.created_time <= end_of_today))
             ).first()
             
             if not dup_briefing:
@@ -543,7 +552,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                 title_text = f"{c.name} 고객 — {visit_time} 방문 예정"
                 
                 new_briefing_noti = Notification(
-                    created_time=datetime.combine(target_date, datetime.now().time()),
+                    created_time=datetime.combine(target_date, kst_time),
                     title=title_text,
                     content=briefing_text,
                     category="방문 예정 브리핑",
@@ -567,9 +576,13 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
 if __name__ == "__main__":
     # 단위 테스트 코드 지원
     import argparse
+    from datetime import timezone, timedelta
+    kst_tz = timezone(timedelta(hours=9))
+    default_date = datetime.now(kst_tz).strftime("%Y-%m-%d")
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--u_id", type=str, default="user1")
-    parser.add_argument("--date", type=str, default=datetime.now().strftime("%Y-%m-%d"))
+    parser.add_argument("--date", type=str, default=default_date)
     args = parser.parse_args()
     
     run_notification_generator(args.u_id, args.date)
