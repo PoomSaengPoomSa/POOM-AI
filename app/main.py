@@ -64,6 +64,11 @@ def simulator_chat(req: SimulatorChatRequest):
 
 @app.post("/api/v1/ai-todo/run")
 def run_ai_todo(req: AiTodoRequest):
+    import sys
+    import os
+    todo_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent", "todo"))
+    if todo_dir not in sys.path:
+        sys.path.insert(0, todo_dir)
     try:
         if req.u_id == "all":
             from agent.todo.scheduler import run_todo_agent_for_all_pbs
