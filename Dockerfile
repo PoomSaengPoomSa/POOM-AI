@@ -18,11 +18,12 @@ WORKDIR /app
 COPY agent/ ./agent/
 COPY ml/ ./ml/
 COPY sql/ ./sql/
+COPY llm/ ./llm/
+COPY app/ ./app/
  
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
  
 EXPOSE 8001
 # TODO: 진입점 확정 후 수정
-CMD ["python", "agent/todo/main.py"]
- 
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
