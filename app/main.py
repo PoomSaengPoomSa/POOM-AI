@@ -64,9 +64,13 @@ def simulator_chat(req: SimulatorChatRequest):
 
 @app.post("/api/v1/ai-todo/run")
 def run_ai_todo(req: AiTodoRequest):
-    from agent.todo.main import run_agent_for_pb
     try:
-        run_agent_for_pb(req.u_id, req.date)
+        if req.u_id == "all":
+            from agent.todo.scheduler import run_todo_agent_for_all_pbs
+            run_todo_agent_for_all_pbs(req.date)
+        else:
+            from agent.todo.main import run_agent_for_pb
+            run_agent_for_pb(req.u_id, req.date)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
