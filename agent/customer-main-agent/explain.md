@@ -21,7 +21,7 @@ flowchart TD
     classDef loopBg fill:#FAFAFA,stroke:#9E9E9E,stroke-dasharray: 5 5;
 
     %% 1. 진입점 및 대상 고객 선정 단계
-    Start([1. run.py 배치 구동]):::startEnd --> CheckCLI{CLI 인자 수동지정<br>--c_ids 존재 여부?}:::decision
+    Start([1. main.py 배치 구동]):::startEnd --> CheckCLI{CLI 인자 수동지정<br>--c_ids 존재 여부?}:::decision
     
     CheckCLI -- Yes (수동 지정) --> ManualTarget[수동 c_ids 목록으로 대상 확정<br>※ AI Selector 단계 우회]:::process
     CheckCLI -- No (자동 배치) --> ScanDB[1단계: DB 스캔 후보 VVIP 추출<br>tools.fetch_batch_target_c_ids]:::process
