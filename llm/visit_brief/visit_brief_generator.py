@@ -385,12 +385,13 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                     ).first()
                     
                     if not dup:
-                        # 해당 고객의 동일한 만기 상품에 대한 이전 알림(D-3, D-4 등) 삭제
-                        db.query(Notification).filter(
-                            Notification.u_id == u_id,
-                            Notification.category == "만기 알림",
-                            Notification.title.like(f"%{c.name}%{p.name}%만기%")
-                        ).delete(synchronize_session=False)
+                        # 해당 고객의 동일한 만기 상품에 대한 이전 알림(D-3, D-4 등) 삭제하지 않고 누적해서 유지
+                        # db.query(Notification).filter(
+                        #     Notification.u_id == u_id,
+                        #     Notification.category == "만기 알림",
+                        #     Notification.title.like(f"%{c.name}%{p.name}%만기%")
+                        # ).delete(synchronize_session=False)
+
 
                         remaining_days = (cp.expiration_date - target_date).days
                         d_day_str = f"D-{remaining_days}" if remaining_days > 0 else "금일 만기"
@@ -438,6 +439,42 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                         )
                         db.add(new_noti)
                         logger.info(f"[이탈 위험 알림 추가] {c.name} 고객 이탈 등급 위험")
+
+        # 1-4. 최근 7일 내 타행 거액(1,000만원 이상) 출금 거래 등록 후 알림 생성 (거액 거래 탐지)
+        start_of_7days_ago = datetime.combine(target_date - timedelta(days=7), datetime.min.time())
+        if pb_customer_ids:
+            large_withdrawals = db.query(CustomerTransaction).filter(
+                CustomerTransaction.c_id.in_(pb_customer_ids),
+                CustomerTransaction.ct_type == 'W',
+                CustomerTransaction.amount >= 10000000,
+                CustomerTransaction.opp_bank_name != "당행",
+                CustomerTransaction.ct_datetime >= start_of_7days_ago,
+                CustomerTransaction.ct_datetime <= end_of_today
+            ).all()
+            
+            for tx in large_withdrawals:
+                c = tx.customer
+                if c:
+                    dup = db.query(Notification).filter(
+                        Notification.u_id == u_id,
+                        Notification.category == "거액 거래 탐지",
+                        Notification.title.like(f"%{c.name}%거액 출금%"),
+                        Notification.created_time >= start_of_today,
+                        Notification.created_time <= end_of_today
+                    ).first()
+                    
+                    if not dup:
+                        new_noti = Notification(
+                            created_time=datetime.combine(target_date, kst_time),
+                            title=f"{c.name} 고객 타행 거액 출금 감지",
+                            content=f"{c.name} 고객님이 최근 7일 내 타행({tx.opp_bank_name})으로 거액 출금({int(tx.amount):,}원) 거래를 발생시켰습니다. 타행 자산 이탈 여부 확인을 위한 선제적 관리가 필요합니다.",
+                            category="거액 거래 탐지",
+                            state_us="미확인",
+                            u_id=u_id,
+                            c_id=c.c_id
+                        )
+                        db.add(new_noti)
+                        logger.info(f"[거액 거래 알림 추가] {c.name} 고객 - {int(tx.amount):,}원 출금")
 
         # ---------------------------------------------------------
         # 트랙 2: 확정 상담 일정 기반 실시간 LLM '방문 예정 브리핑' 생성
