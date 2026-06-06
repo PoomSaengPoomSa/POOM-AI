@@ -72,11 +72,16 @@ class MCPClientManager:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         mcp_server_path = os.path.abspath(os.path.join(current_dir, "..", "mcp_server.py"))
         
+        # Disable LangSmith tracing inside the MCP server subprocess to prevent deadlock/hang on Windows stdio
+        env = os.environ.copy()
+        env["LANGSMITH_TRACING"] = "false"
+        env["LANGCHAIN_TRACING_V2"] = "false"
+        
         # Run using current virtualenv interpreter
         server_params = StdioServerParameters(
             command=sys.executable,
             args=[mcp_server_path],
-            env=os.environ.copy()
+            env=env
         )
         
         self.client_context = stdio_client(server_params)
