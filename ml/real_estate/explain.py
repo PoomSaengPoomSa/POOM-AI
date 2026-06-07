@@ -6,7 +6,8 @@ import shap
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
-from utils.preprocess import preprocess_data
+import pymysql
+from dotenv import load_dotenv, find_dotenv
 
 def save_contributions_to_mysql(features, shap_values):
     import pymysql
@@ -91,6 +92,58 @@ def save_contributions_to_mysql(features, shap_values):
         print(f"[Error] Failed to save SHAP contributions to MySQL: {e}")
 
 
+def load_data_from_mysql():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(base_dir, 'data', 'final_dataset.csv')
+    
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB configuration. Falling back to local final_dataset.csv...")
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"[CSV] Loaded preprocessed data successfully from local final_dataset.csv: {csv_path}")
+            return df
+        raise ValueError(f"No DB credentials and final CSV not found at: {csv_path}")
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        try:
+            with connection.cursor() as cursor:
+                sql = "SELECT * FROM ml_realestate_preprocessed ORDER BY date_ym ASC"
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+            
+        df = pd.DataFrame(rows)
+        for col in df.columns:
+            if col not in ['date_ym']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        print("[DB] Loaded preprocessed data successfully from MySQL table 'ml_realestate_preprocessed'.")
+        return df
+    except Exception as e:
+        print(f"[Warning] MySQL query failed ({e}). Falling back to local final_dataset.csv...")
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"[CSV] Loaded preprocessed data successfully from local CSV: {csv_path}")
+            return df
+        raise RuntimeError(f"Database connection failed and local CSV not found at: {csv_path}")
+
+
 def run_explain(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     models_dir = os.path.join(base_dir, 'models')
@@ -111,15 +164,28 @@ def run_explain(valid_mode=False):
         selected_features = pickle.load(f)
         
     # Get preprocessed data
-    data = preprocess_data(vif_threshold=20.0, valid_mode=valid_mode)
-    if data is None:
-        print("[Error] Preprocessing failed.")
-        return
+    df = load_data_from_mysql()
+    
+    from model import RealEstateEnsembleRegressor as cfg
+    df['date_ym'] = df['date_ym'].astype(str).str.strip()
+    TARGET = "next_change_rate"
+
+    if valid_mode:
+        train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
+        test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+        eval_name = "Validation"
+    else:
+        train_df = df[df['date_ym'] <= cfg.VALID_END].copy()
+        test_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
+        eval_name = "Test"
         
-    X_train_sc = data['X_train_sc']
-    X_test_sc = data['X_test_sc']
-    y_test = data['y_test']
-    test_df = data['test_df']
+    train_clean = train_df.dropna(subset=[TARGET]).copy()
+    test_clean  = test_df.dropna(subset=[TARGET]).copy()
+    
+    X_train_sc = train_clean[selected_features].values
+    X_test_sc  = test_clean[selected_features].values
+    y_test  = test_clean[TARGET].values
+    test_df = test_clean
     
     # Convert standardized test set back to dataframe for beautiful SHAP labels
     X_test_df = pd.DataFrame(X_test_sc, columns=selected_features)

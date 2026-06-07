@@ -10,6 +10,8 @@ from sklearn.linear_model import LinearRegression
 # utils/ 하위에서 직접 실행 시 상위 디렉토리를 path에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+NUM_FEATURES = 7
+
 
 
 def load_data_from_mysql():
@@ -79,52 +81,51 @@ def calculate_vif_custom(df, features):
     return pd.Series(vif_dict)
 
 
-def filter_features_by_vif(df, features, threshold=5.0, max_features=6):
+def filter_features_by_vif(df, features, threshold=10.0):
     current_features = list(features)
-    print("  [Aggressive VIF Feature Pruning for Production]")
-
+    print("=" * 55)
+    print(f"  [VIF Feature Pruning] Threshold = {threshold}")
+    print("=" * 55)
+    
     protected_features = ["buyer_dominance_change", "kr_mortgage_rate_change"]
 
     while True:
-        if len(current_features) <= 4:
+        if len(current_features) <= NUM_FEATURES:
             break
 
         vif_series = calculate_vif_custom(df, current_features)
-
-        candidates = vif_series.drop(labels=[f for f in protected_features if f in vif_series.index])
+        
+        candidates = vif_series.drop(labels=[f for f in protected_features if f in vif_series.index], errors='ignore')
         if candidates.empty:
             break
 
         max_vif = candidates.max()
         max_feature = candidates.idxmax()
 
-        if max_vif > threshold or len(current_features) > max_features:
+        if max_vif > threshold:
             print(f"    - Dropping '{max_feature}' with VIF = {max_vif:.4f}")
             current_features.remove(max_feature)
         else:
             break
 
-    print(f"  Final selected features ({len(current_features)}): {current_features}")
-
-    final_vifs = calculate_vif_custom(df, current_features)
-    for feat, v in final_vifs.items():
-        print(f"    * {feat:<25}: VIF = {v:.4f}")
-
+    print(f"  Final features remaining after VIF pruning ({len(current_features)}): {current_features}")
     return current_features
 
 
-def preprocess_data(vif_threshold=5.0, valid_mode=False):
-    # MySQL에서 직접 데이터 로드
+def preprocess():
+    import pickle
+    
+    # 1. MySQL에서 직접 데이터 로드
     df = load_data_from_mysql()
     df = df.dropna(subset=["house_price_idx"]).copy()
     df = df.sort_values("date_ym").reset_index(drop=True)
 
-    # 1. Target creation
+    # Target creation
     df["next_house_price_idx"] = df["house_price_idx"].shift(-1)
     TARGET = "next_change_rate"
     df[TARGET] = (df["next_house_price_idx"] - df["house_price_idx"]) / df["house_price_idx"] * 100
 
-    # 2. Impute missing values
+    # Impute missing values
     raw_features = [
         "house_price_idx", "kr_cpi", "kr_unemployment",
         "kr_base_rate", "kr_mortgage_rate", "kospi200",
@@ -132,10 +133,8 @@ def preprocess_data(vif_threshold=5.0, valid_mode=False):
     ]
     df[raw_features] = df[raw_features].ffill().bfill()
 
-    # 3. 파생 변수 엔지니어링 (변수 특성에 맞게 pct_change / diff 구분)
-    # 절댓값 스케일이 큰 변수 → 변화율(pct_change)
+    # 파생 변수 엔지니어링 (변수 특성에 맞게 pct_change / diff 구분)
     rate_cols = ["house_price_idx", "kr_cpi", "kospi200", "apt_trade_count", "kr_m2"]
-    # 금리·지수처럼 이미 % 단위인 변수 → 차분(diff)
     diff_cols  = ["kr_unemployment", "kr_base_rate", "kr_mortgage_rate", "buyer_dominance"]
 
     stationary_cols = []
@@ -162,7 +161,7 @@ def preprocess_data(vif_threshold=5.0, valid_mode=False):
             df[f"{col}_ma6"] = df[col].rolling(window=6).mean()
             rolling_features.extend([f"{col}_ma3", f"{col}_ma6"])
 
-    # 계절성: sin/cos 인코딩 (주기 연속성 보존)
+    # 계절성: sin/cos 인코딩
     month_series = pd.to_datetime(df['date_ym'], format='%Y%m').dt.month
     df['month_sin'] = np.sin(2 * np.pi * month_series / 12)
     df['month_cos'] = np.cos(2 * np.pi * month_series / 12)
@@ -170,66 +169,93 @@ def preprocess_data(vif_threshold=5.0, valid_mode=False):
 
     candidate_features = stationary_cols + lagged_features + rolling_features + seasonality_features
 
-    # candidate_features에 결측치(NaN)가 있는 앞부분 행들을 제거 (ffill/bfill 대신 dropna 적용)
+    # candidate_features에 결측치(NaN)가 있는 앞부분 행들을 제거
     df = df.dropna(subset=candidate_features).reset_index(drop=True)
 
-    # Train/Test split (Fixed Date Split)
+    # Train/Test split 기준으로 피처 선택 (Lookahead Bias 차단)
     from model import RealEstateEnsembleRegressor as cfg
     df['date_ym'] = df['date_ym'].astype(str).str.strip()
-    if valid_mode:
-        train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
-        test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
-        eval_name = "Validation"
-    else:
-        train_df = df[df['date_ym'] <= cfg.VALID_END].copy()
-        test_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
-        eval_name = "Test"
+    
+    # 피처 선택용 Train 데이터 분리 (TRAIN_END인 202403 기준)
+    train_clean = df[df['date_ym'] <= cfg.TRAIN_END].dropna(subset=[TARGET]).copy()
 
-    # 모델 학습/평가 세트 추출 시에만 TARGET 결측치를 드롭함
-    train_clean = train_df.dropna(subset=[TARGET]).copy()
-    test_clean  = test_df.dropna(subset=[TARGET]).copy()
+    # 1) VIF Pruning (Threshold = 10.0)
+    vif_filtered_features = filter_features_by_vif(train_clean, candidate_features, threshold=10.0)
 
+    # 2) RF Feature Selection from the VIF-filtered features
     print("=" * 55)
-    print(f"Data Preprocessing & Train/{eval_name} Splitting")
+    print(f"Static Random Forest Feature Selection (on VIF-filtered pool)")
     print("=" * 55)
     print(f"  Total samples (raw)     : {len(df)}")
-    print(f"  Train period (clean)    : {train_clean['date_ym'].min()} ~ {train_clean['date_ym'].max()} ({len(train_clean)} months)")
-    print(f"  {eval_name} period (clean)     : {test_clean['date_ym'].min()} ~ {test_clean['date_ym'].max()} ({len(test_clean)} months)")
+    print(f"  RF Fit Train period     : {train_clean['date_ym'].min()} ~ {train_clean['date_ym'].max()} ({len(train_clean)} months)")
 
-    selected_features = filter_features_by_vif(train_clean, candidate_features, threshold=vif_threshold, max_features=6)
+    from sklearn.ensemble import RandomForestRegressor
+    X_train_all = train_clean[vif_filtered_features]
+    y_train = train_clean[TARGET].values
 
-    X_train = train_clean[selected_features]
-    y_train = train_clean[TARGET]
-    X_test = test_clean[selected_features]
-    y_test = test_clean[TARGET]
+    print(f"  Selecting top {NUM_FEATURES} features using 20 Random Forest Regressor ensembles from {X_train_all.shape[1]} features...")
+    importances_list = []
+    for i in range(20):
+        rf = RandomForestRegressor(
+            n_estimators=100,
+            random_state=i,
+            max_depth=5,
+            n_jobs=-1
+        )
+        rf.fit(X_train_all, y_train)
+        importances_list.append(rf.feature_importances_)
+        
+    avg_importances = np.mean(importances_list, axis=0)
+    
+    feat_imp = pd.DataFrame({
+        'feature': vif_filtered_features,
+        'importance': avg_importances
+    }).sort_values('importance', ascending=False)
+    
+    selected_features = feat_imp.head(NUM_FEATURES)['feature'].tolist()
 
-    # 트리 기반 앙상블 모델은 피처 스케일링이 필요 없으므로 StandardScaler를 비활성화함
-    X_train_sc = X_train.values
-    X_test_sc = X_test.values
-
-    preprocessed_data = {
-        'df': df,
-        'train_df': train_clean,
-        'test_df': test_clean,
-        'X_train_sc': X_train_sc,
-        'X_test_sc': X_test_sc,
-        'y_train': y_train,
-        'y_test': y_test,
-        'features': selected_features,
-        'scaler': None
-    }
+    print(f"  Selected {NUM_FEATURES} Features:")
+    for idx, r in feat_imp.head(NUM_FEATURES).iterrows():
+        print(f"    - {r['feature']}: importance = {r['importance']:.4f}")
 
     # -----------------------------------------
-    # DB 적재: ml_realestate_preprocessed (gold/base_rate와 동일한 방식)
+    # Save Selected Features List
     # -----------------------------------------
-    all_feature_cols = ['house_price_idx'] + candidate_features
-    final_order = ['date_ym'] + all_feature_cols + [TARGET]
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    models_dir = os.path.join(base_dir, 'models')
+    os.makedirs(models_dir, exist_ok=True)
+    
+    features_path = os.path.join(models_dir, 'selected_features.pkl')
+    with open(features_path, 'wb') as f:
+        pickle.dump(selected_features, f)
+        
+    txt_features_path = os.path.join(models_dir, 'selected_features.txt')
+    with open(txt_features_path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(selected_features))
+        
+    print(f"  Saved selected features list to: {features_path} and .txt")
 
-    # 저장할 컬럼만 추려서 결측치 처리
-    export_df = df[final_order].copy()
-    numeric_cols = export_df.select_dtypes(include=[np.number]).columns
-    export_df[numeric_cols] = export_df[numeric_cols].round(6)
+    # -----------------------------------------
+    # DB/CSV 적재 컬럼 추출
+    # -----------------------------------------
+    # house_price_idx는 최신 실제 지표 확인을 위해 반드시 내보내야 함
+    all_cols = ['date_ym', 'house_price_idx'] + selected_features + [TARGET]
+    df_export = df[all_cols].copy()
 
+    # 소수점 6자리 반올림
+    numeric_cols = df_export.select_dtypes(include=[np.number]).columns
+    df_export[numeric_cols] = df_export[numeric_cols].round(6)
+
+    # Save to local CSV
+    data_dir = os.path.join(base_dir, 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    save_path = os.path.join(data_dir, 'final_dataset.csv')
+    df_export.to_csv(save_path, index=False, encoding='utf-8-sig')
+    print(f"  Saved preprocessed dataset to: {save_path}")
+
+    # -----------------------------------------
+    # DB 적재: ml_realestate_preprocessed
+    # -----------------------------------------
     print("\n[Database Export] Loading preprocessed real estate data into MySQL...")
 
     load_dotenv(find_dotenv())
@@ -257,22 +283,24 @@ def preprocess_data(vif_threshold=5.0, valid_mode=False):
             with connection.cursor() as cursor:
                 table_name = "ml_realestate_preprocessed"
 
-                # DROP & CREATE (항상 최신 피처 구조로 갱신)
                 cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
 
-                columns_def = ["date_ym VARCHAR(10) PRIMARY KEY"]
-                for col in all_feature_cols:
+                columns_def = [
+                    "date_ym VARCHAR(10) PRIMARY KEY",
+                    "house_price_idx DECIMAL(15, 6)"
+                ]
+                for col in selected_features:
                     columns_def.append(f"`{col}` DECIMAL(15, 6)")
                 columns_def.append(f"`{TARGET}` DECIMAL(15, 6)")
 
                 create_sql = f"CREATE TABLE {table_name} ({', '.join(columns_def)}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
                 cursor.execute(create_sql)
-                print(f"   Created table '{table_name}' with {len(all_feature_cols)} feature columns.")
+                print(f"   Created table '{table_name}' with {len(selected_features)} selected feature columns.")
 
                 # Batch INSERT
-                db_data = export_df.replace({np.nan: None}).values.tolist()
-                placeholders = ", ".join(["%s"] * len(final_order))
-                col_names_quoted = ", ".join([f"`{c}`" for c in final_order])
+                db_data = df_export.replace({np.nan: None}).values.tolist()
+                placeholders = ", ".join(["%s"] * len(all_cols))
+                col_names_quoted = ", ".join([f"`{c}`" for c in all_cols])
                 insert_sql = f"INSERT INTO {table_name} ({col_names_quoted}) VALUES ({placeholders})"
 
                 cursor.executemany(insert_sql, db_data)
@@ -283,20 +311,17 @@ def preprocess_data(vif_threshold=5.0, valid_mode=False):
         except Exception as e:
             print(f"   [Error] MySQL Export failed: {e}")
 
-    return preprocessed_data
-
+    return df_export
 
 
 if __name__ == '__main__':
     print("=" * 55)
-    print("[Preprocess] 부동산 전처리 검증 실행")
+    print("[Preprocess] 부동산 전처리 정적 실행")
     print("=" * 55)
-    result = preprocess_data(vif_threshold=20.0)
-    if result:
-        print(f"\n[Preprocess] 완료!")
-        print(f"  Train : {result['train_df']['date_ym'].min()} ~ {result['train_df']['date_ym'].max()} ({len(result['X_train_sc'])} rows)")
-        print(f"  Test  : {result['test_df']['date_ym'].min()} ~ {result['test_df']['date_ym'].max()} ({len(result['X_test_sc'])} rows)")
-        print(f"  Features ({len(result['features'])}): {result['features']}")
+    result = preprocess()
+    if result is not None:
+        print(f"\n[Preprocess] 완료! 최종 데이터셋 행 개수: {len(result)}")
+        print(f"  Columns: {list(result.columns)}")
     else:
         print("[Preprocess] 전처리 실패")
 

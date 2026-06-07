@@ -2,9 +2,12 @@ import os
 import pickle
 import numpy as np
 import pandas as pd
+import pymysql
+from dotenv import load_dotenv, find_dotenv
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.linear_model import LinearRegression
-from utils.preprocess import preprocess_data
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
+from sklearn.tree import DecisionTreeRegressor
 
 def evaluate(y_true, y_pred):
     mae = mean_absolute_error(y_true, y_pred)
@@ -17,6 +20,57 @@ def evaluate(y_true, y_pred):
         "mae": round(mae, 4),
         "mse": round(mse, 6)
     }
+
+def load_data_from_mysql():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(base_dir, 'data', 'final_dataset.csv')
+    
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB configuration. Falling back to local final_dataset.csv...")
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"[CSV] Loaded preprocessed data successfully from local final_dataset.csv: {csv_path}")
+            return df
+        raise ValueError(f"No DB credentials and final CSV not found at: {csv_path}")
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        try:
+            with connection.cursor() as cursor:
+                sql = "SELECT * FROM ml_realestate_preprocessed ORDER BY date_ym ASC"
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+            
+        df = pd.DataFrame(rows)
+        for col in df.columns:
+            if col not in ['date_ym']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        print("[DB] Loaded preprocessed data successfully from MySQL table 'ml_realestate_preprocessed'.")
+        return df
+    except Exception as e:
+        print(f"[Warning] MySQL query failed ({e}). Falling back to local final_dataset.csv...")
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"[CSV] Loaded preprocessed data successfully from local CSV: {csv_path}")
+            return df
+        raise RuntimeError(f"Database connection failed and local CSV not found at: {csv_path}")
 
 def run_test(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -36,28 +90,60 @@ def run_test(valid_mode=False):
         selected_features = pickle.load(f)
         
     # Get preprocessed data
-    data = preprocess_data(vif_threshold=20.0, valid_mode=valid_mode)
-    if data is None:
-        print("[Error] Preprocessing failed.")
-        return
+    df = load_data_from_mysql()
+    
+    from model import RealEstateEnsembleRegressor as cfg
+    df['date_ym'] = df['date_ym'].astype(str).str.strip()
+    TARGET = "next_change_rate"
+
+    if valid_mode:
+        train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
+        test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+        eval_name = "Validation"
+    else:
+        train_df = df[df['date_ym'] <= cfg.VALID_END].copy()
+        test_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
+        eval_name = "Test"
         
-    X_train_sc = data['X_train_sc']
-    X_test_sc = data['X_test_sc']
-    y_train = data['y_train']
-    y_test = data['y_test']
-    test_df = data['test_df']
+    train_clean = train_df.dropna(subset=[TARGET]).copy()
+    test_clean  = test_df.dropna(subset=[TARGET]).copy()
+    
+    X_train_sc = train_clean[selected_features].values
+    X_test_sc  = test_clean[selected_features].values
+    y_train = train_clean[TARGET].values
+    y_test  = test_clean[TARGET].values
+    test_df = test_clean
     
     # -----------------------------------------
     # Predictions
     # -----------------------------------------
-    # Baseline: Simple Linear Regression on the same features
+    # 1. Baseline: Simple Linear Regression (OLS)
     lr = LinearRegression().fit(X_train_sc, y_train)
     lr_pred = lr.predict(X_test_sc)
     
-    # 2. Tuned Ridge Regression (Supreme Champion)
-    from sklearn.linear_model import Ridge
+    # 2. Ridge Regression
     ridge = Ridge(alpha=1.0).fit(X_train_sc, y_train)
     ridge_pred = ridge.predict(X_test_sc)
+    
+    # 3. Lasso Regression
+    lasso = Lasso(alpha=0.01).fit(X_train_sc, y_train)
+    lasso_pred = lasso.predict(X_test_sc)
+    
+    # 4. ElasticNet Regression
+    elastic = ElasticNet(alpha=0.1, l1_ratio=0.5).fit(X_train_sc, y_train)
+    elastic_pred = elastic.predict(X_test_sc)
+    
+    # 5. RandomForest Regressor (Baseline Tree)
+    rf_baseline = RandomForestRegressor(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1).fit(X_train_sc, y_train)
+    rf_pred = rf_baseline.predict(X_test_sc)
+    
+    # 6. ExtraTrees Regressor (Baseline Tree)
+    et_baseline = ExtraTreesRegressor(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1).fit(X_train_sc, y_train)
+    et_pred = et_baseline.predict(X_test_sc)
+    
+    # 7. DecisionTree Regressor
+    dt_baseline = DecisionTreeRegressor(max_depth=4, random_state=42).fit(X_train_sc, y_train)
+    dt_pred = dt_baseline.predict(X_test_sc)
     
     # Individual models in Ensemble
     ind_preds = ensemble.get_individual_predictions(X_test_sc)
@@ -74,11 +160,16 @@ def run_test(valid_mode=False):
     results = {}
     results["LinearRegression (OLS)"] = evaluate(y_test, lr_pred)
     results["Ridge Regression (alpha=1.0)"] = evaluate(y_test, ridge_pred)
+    results["Lasso Regression (alpha=0.01)"] = evaluate(y_test, lasso_pred)
+    results["ElasticNet (alpha=0.1)"] = evaluate(y_test, elastic_pred)
+    results["RandomForest (max_depth=4)"] = evaluate(y_test, rf_pred)
+    results["ExtraTrees (max_depth=4)"] = evaluate(y_test, et_pred)
+    results["DecisionTree (max_depth=4)"] = evaluate(y_test, dt_pred)
     
     for name, pred in ind_preds.items():
         results[f"Individual {name}"] = evaluate(y_test, pred)
         
-    results["Ensemble (Weighted ML Blend)"] = evaluate(y_test, ensemble_pred)
+    results["Our Model (Tuned XGBoost)"] = evaluate(y_test, ensemble_pred)
     
     eval_name = "Validation" if valid_mode else "Test"
 

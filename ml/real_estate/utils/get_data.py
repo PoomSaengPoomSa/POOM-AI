@@ -34,7 +34,10 @@ def collect_all():
             database=DB_NAME,
             port=DB_PORT,
             charset='utf8mb4',
-            cursorclass=pymysql.cursors.DictCursor
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=5,
+            read_timeout=5,
+            write_timeout=5
         )
         print("  DB Connection successful!")
         

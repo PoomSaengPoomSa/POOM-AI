@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 # Add project root directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
-from ai.ml.gold.experimental.experiment import load_raw_data, preprocess_data_v2
+from ml.gold.experimental.experiment import load_raw_data, preprocess_data_v2
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import xgboost as xgb

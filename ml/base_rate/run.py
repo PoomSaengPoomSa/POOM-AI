@@ -11,18 +11,23 @@ def run_script(script_name, forward_args=[]):
     python_executable = sys.executable
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), script_name)
     
+    # Pass current environment to the child process
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    
     try:
         process = subprocess.Popen(
             [python_executable, "-X", "utf8", script_path] + forward_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            encoding='utf-8'
+            encoding='utf-8',
+            env=env
         )
         
         # 프로세스 출력을 실시간으로 터미널에 표시
         for line in process.stdout:
-            print(line, end='')
+            print(line, end='', flush=True)
             
         process.wait()
         

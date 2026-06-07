@@ -164,8 +164,37 @@ def train_model(valid_mode=False):
     load_dotenv(find_dotenv())
 
     # MLflow 설정
-    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI', None))
-    mlflow.set_experiment("base_rate")
+    tracking_uri = os.getenv('MLFLOW_TRACKING_URI', None)
+    skip_mlflow = False
+    
+    if tracking_uri:
+        try:
+            import requests
+            resp = requests.get(tracking_uri, timeout=2)
+            if resp.status_code == 404 and "TUNNEL NOT FOUND" in resp.text:
+                print("[Warning] MLflow remote tunnel is offline. Skipping MLflow logging.")
+                skip_mlflow = True
+        except Exception as e:
+            print(f"[Warning] Failed to connect to MLflow tracking server: {e}. Skipping MLflow logging.")
+            skip_mlflow = True
+    else:
+        print("[Warning] MLFLOW_TRACKING_URI is not set. Skipping MLflow logging.")
+        skip_mlflow = True
+
+    if skip_mlflow:
+        class DummyMLflow:
+            def __getattr__(self, name): return self
+            def __call__(self, *args, **kwargs): return self
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc_val, exc_tb): pass
+            def active_run(self, *args, **kwargs): return None
+        
+        global mlflow
+        mlflow = DummyMLflow()
+    else:
+        print(f"[MLflow] Using remote MLflow tracking: {tracking_uri}")
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment("base_rate")
  
     with mlflow.start_run():
  
