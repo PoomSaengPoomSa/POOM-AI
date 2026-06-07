@@ -89,7 +89,7 @@ graph TD
 ```env
 LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
-LANGSMITH_API_KEY=lsv2_pt_...
+LANGSMITH_API_KEY=your_langsmith_api_key
 LANGSMITH_PROJECT="poom-customer_agent"
 ```
 실행 시 에이전트는 해당 설정값들을 자동으로 감지하여 모든 체인 및 그래프 실행 흐름을 LangSmith 프로젝트로 안전하게 실시간 전송합니다.

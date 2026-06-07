@@ -17,6 +17,7 @@ def run_script(script_name, forward_args=[]):
     
     # Pass current environment (with loaded .env variables) to the child process
     env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     
     try:
         process = subprocess.Popen(
@@ -29,7 +30,7 @@ def run_script(script_name, forward_args=[]):
         )
         
         for line in process.stdout:
-            print(line, end='')
+            print(line, end='', flush=True)
             
         process.wait()
         
