@@ -5,15 +5,9 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pymysql
+import pandas as pd
 from dotenv import load_dotenv, find_dotenv
-from utils.preprocess import preprocess_data
 from model import RealEstateEnsembleRegressor
-
-# Windows cp949 환경에서 MLflow 이모지 출력 시 UnicodeEncodeError 방지
-if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 def save_prediction_to_mysql(predicted_value, predicted_index, run_id):
     import pymysql
@@ -153,96 +147,190 @@ def get_latest_actual_realestate_index():
         print(f"[Error] Failed to fetch latest actual realestate index: {e}")
     return None
 
+def load_data_from_mysql():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(base_dir, 'data', 'final_dataset.csv')
+    
+    load_dotenv(find_dotenv())
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB configuration. Falling back to local final_dataset.csv...")
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"[CSV] Loaded preprocessed data successfully from local final_dataset.csv: {csv_path}")
+            return df
+        raise ValueError(f"No DB credentials and final CSV not found at: {csv_path}")
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        try:
+            with connection.cursor() as cursor:
+                sql = "SELECT * FROM ml_realestate_preprocessed ORDER BY date_ym ASC"
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+            
+        df = pd.DataFrame(rows)
+        for col in df.columns:
+            if col not in ['date_ym']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        print("[DB] Loaded preprocessed data successfully from MySQL table 'ml_realestate_preprocessed'.")
+        return df
+    except Exception as e:
+        print(f"[Warning] MySQL query failed ({e}). Falling back to local final_dataset.csv...")
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"[CSV] Loaded preprocessed data successfully from local CSV: {csv_path}")
+            return df
+        raise RuntimeError(f"Database connection failed and local CSV not found at: {csv_path}")
+
 
 def run_train(valid_mode=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    models_dir = os.path.join(base_dir, 'models')
 
     load_dotenv(find_dotenv())
  
     # MLflow 설정
-    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI', None))
-    mlflow.set_experiment("real_estate")
+    tracking_uri = os.getenv('MLFLOW_TRACKING_URI', None)
+    skip_mlflow = False
+    
+    if tracking_uri:
+        try:
+            import requests
+            resp = requests.get(tracking_uri, timeout=2)
+            if resp.status_code == 404 and "TUNNEL NOT FOUND" in resp.text:
+                print("[Warning] MLflow remote tunnel is offline. Skipping MLflow logging.")
+                skip_mlflow = True
+        except Exception as e:
+            print(f"[Warning] Failed to connect to MLflow tracking server: {e}. Skipping MLflow logging.")
+            skip_mlflow = True
+    else:
+        print("[Warning] MLFLOW_TRACKING_URI is not set. Skipping MLflow logging.")
+        skip_mlflow = True
+
+    if skip_mlflow:
+        class DummyMLflow:
+            def __getattr__(self, name): return self
+            def __call__(self, *args, **kwargs): return self
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc_val, exc_tb): pass
+            def active_run(self, *args, **kwargs): return None
+        
+        global mlflow
+        mlflow = DummyMLflow()
+    else:
+        print(f"[MLflow] Using remote MLflow tracking: {tracking_uri}")
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment("real_estate")
  
     with mlflow.start_run():
  
-        # Preprocess
-        data = preprocess_data(vif_threshold=20.0, valid_mode=valid_mode)
-        if data is None:
-            print("[Error] Preprocessing failed.")
-            return
+        # Load Preprocessed Data
+        df = load_data_from_mysql()
+        
+        # Load Selected Features list
+        features_path = os.path.join(models_dir, 'selected_features.pkl')
+        if not os.path.exists(features_path):
+            raise FileNotFoundError(f"Selected features list not found at: {features_path}. Run preprocess.py first.")
+            
+        with open(features_path, 'rb') as f:
+            selected_features = pickle.load(f)
  
-        X_train_sc = data['X_train_sc']
-        X_test_sc  = data['X_test_sc']
-        y_train = data['y_train']
-        y_test  = data['y_test']
-        selected_features = data['features']
-        scaler = data['scaler']
- 
-        # MLflow - 전처리 파라미터 기록
-        train_df = data['train_df']
-        test_df = data['test_df']
-        eval_name = "Validation" if valid_mode else "Test"
+        from model import RealEstateEnsembleRegressor as cfg
+        df['date_ym'] = df['date_ym'].astype(str).str.strip()
+        TARGET = "next_change_rate"
 
+        if valid_mode:
+            train_df = df[df['date_ym'] <= cfg.TRAIN_END].copy()
+            test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
+            eval_name = "Validation"
+        else:
+            train_df = df[df['date_ym'] <= cfg.VALID_END].copy()
+            test_df  = df[df['date_ym'].between(cfg.TEST_START, cfg.TEST_END)].copy()
+            eval_name = "Test"
+ 
+        train_clean = train_df.dropna(subset=[TARGET]).copy()
+        test_clean  = test_df.dropna(subset=[TARGET]).copy()
+
+        X_train_sc = train_clean[selected_features].values
+        X_test_sc  = test_clean[selected_features].values
+        y_train = train_clean[TARGET].values
+        y_test  = test_clean[TARGET].values
+
+        # MLflow - 전처리 파라미터 기록
         mlflow.log_param("valid_mode", str(valid_mode))
-        mlflow.log_param("train_start", train_df['date_ym'].min())
-        mlflow.log_param("train_end", train_df['date_ym'].max())
-        mlflow.log_param("test_start", test_df['date_ym'].min())
-        mlflow.log_param("test_end", test_df['date_ym'].max())
-        mlflow.log_param("vif_threshold", 20.0)
+        mlflow.log_param("train_start", train_clean['date_ym'].min())
+        mlflow.log_param("train_end", train_clean['date_ym'].max())
+        mlflow.log_param("test_start", test_clean['date_ym'].min())
+        mlflow.log_param("test_end", test_clean['date_ym'].max())
         mlflow.log_param("train_rows", len(X_train_sc))
         mlflow.log_param("test_rows", len(X_test_sc))
         mlflow.log_param("num_features", len(selected_features))
         mlflow.log_param("random_state", 42)
  
         from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-
+ 
         # -----------------------------------------
         # Train final ensemble model
         # -----------------------------------------
         ensemble = RealEstateEnsembleRegressor(random_state=42)
         ensemble.fit(X_train_sc, y_train)
-
+ 
         # MLflow - Train set 성능 기록
         train_pred = ensemble.predict(X_train_sc)
         train_r2   = r2_score(y_train, train_pred)
         train_mae  = mean_absolute_error(y_train, train_pred)
         train_mse  = mean_squared_error(y_train, train_pred)
         train_rmse = np.sqrt(train_mse)
-
+ 
         mlflow.log_metric("train_r2", train_r2)
         mlflow.log_metric("train_mae", train_mae)
         mlflow.log_metric("train_mse", train_mse)
         mlflow.log_metric("train_rmse", train_rmse)
-
-        # MLflow - Test set 성능 기록 (hold-out, gold/base_rate와 동일한 방식)
+ 
+        # MLflow - Test set 성능 기록
         test_pred = ensemble.predict(X_test_sc)
         test_r2   = r2_score(y_test, test_pred)
         test_mae  = mean_absolute_error(y_test, test_pred)
         test_mse  = mean_squared_error(y_test, test_pred)
         test_rmse = np.sqrt(test_mse)
-
+ 
         mlflow.log_metric("test_r2", test_r2)
         mlflow.log_metric("test_mae", test_mae)
         mlflow.log_metric("test_mse", test_mse)
         mlflow.log_metric("test_rmse", test_rmse)
-
+ 
         print("\n" + "=" * 55)
-        print(f"  Real Estate Ensemble - Train / {eval_name} Performance")
+        print(f"  Real Estate Our Model (Tuned XGBoost) - Train / {eval_name} Performance")
         print("=" * 55)
         print(f"   [Train]  R2: {train_r2:.4f} | MAE: {train_mae:.4f}% | RMSE: {train_rmse:.4f}")
         print(f"   [{eval_name} ]  R2: {test_r2:.4f} | MAE: {test_mae:.4f}% | RMSE: {test_rmse:.4f}")
         print("=" * 55 + "\n")
-
-        # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
-        # 스케일러를 제거했으므로 원본 스케일 최신 피처 값을 그대로 사용하여 예측함
-        X_latest = data['df'][selected_features].iloc[[-1]]
+ 
+        # 최신 피처 값을 사용하여 예측함
+        X_latest = df[selected_features].iloc[[-1]]
         latest_predicted_value = float(ensemble.predict(X_latest.values)[0])
         
         # 이번달 실제 가격지수 조회 및 실질 예측 지수 환산
         re_today = get_latest_actual_realestate_index()
         if re_today is not None:
             predicted_index = re_today * (1 + latest_predicted_value / 100)
-            print(f"[Ensemble] Calculated predicted_index: {predicted_index:.4f} using re_today: {re_today} and predicted_value: {latest_predicted_value}%")
+            print(f"[Our Model] Calculated predicted_index: {predicted_index:.4f} using re_today: {re_today} and predicted_value: {latest_predicted_value}%")
         else:
             predicted_index = None
             print("[Warning] Could not calculate predicted_index because re_today is missing.")
@@ -253,27 +341,15 @@ def run_train(valid_mode=False):
             run_id_val = active_run.info.run_id if active_run else uuid.uuid4().hex[:32]
         except Exception:
             run_id_val = uuid.uuid4().hex[:32]
-
-        # 테스트셋 성능을 DB에 저장 (gold/base_rate와 동일한 방식)
+ 
+        # 테스트셋 성능을 DB에 저장
         save_performance_to_mysql(rmse=test_rmse, r2_score=test_r2, mae=test_mae, mse=test_mse, run_id=run_id_val)
         save_prediction_to_mysql(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
  
-        # Setup directories and save
-        models_dir = os.path.join(base_dir, 'models')
-        os.makedirs(models_dir, exist_ok=True)
- 
-        model_path    = os.path.join(models_dir, 'ensemble_model.pkl')
-        features_path = os.path.join(models_dir, 'selected_features.pkl')
- 
+        # Setup directories and save model
+        model_path = os.path.join(models_dir, 'ensemble_model.pkl')
         with open(model_path, 'wb') as f:
             pickle.dump(ensemble, f)
-        with open(features_path, 'wb') as f:
-            pickle.dump(selected_features, f)
- 
-        # Also save features as readable text
-        txt_features_path = os.path.join(models_dir, 'selected_features.txt')
-        with open(txt_features_path, 'w', encoding='utf-8') as f:
-            f.write("\n".join(selected_features))
  
         # MLflow - 모델 저장 (MinIO artifact)
         try:
@@ -287,6 +363,7 @@ def run_train(valid_mode=False):
         print(f"  Saved Model   : {model_path}")
         print(f"  Saved Features: {features_path} and .txt")
         print(f"  Features size : {len(selected_features)}")
+ 
  
 if __name__ == '__main__':
     import argparse

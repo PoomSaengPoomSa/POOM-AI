@@ -1,7 +1,6 @@
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
-from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
 
 class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
     # 시계열 분할 기준 (특정 시점 고정 분할)
@@ -14,62 +13,36 @@ class RealEstateEnsembleRegressor(BaseEstimator, RegressorMixin):
     def __init__(self, random_state=42):
         self.random_state = random_state
         
-        # 1. Supreme Bagging Model (ExtraTrees)
-        self.et = ExtraTreesRegressor(
-            n_estimators=150,
+        # 1. Optimal Regularized Tuned XGBoost Model
+        self.xgb = XGBRegressor(
+            n_estimators=100,
             max_depth=4,
+            learning_rate=0.01,
+            subsample=1.0,
             random_state=random_state,
             n_jobs=-1
         )
         
-        # 2. Robust Bagging Model (RandomForest)
-        self.rf = RandomForestRegressor(
-            n_estimators=150,
-            max_depth=4,
-            min_samples_leaf=2,
-            max_features=0.8,
-            random_state=random_state,
-            n_jobs=-1
-        )
-        
-        # 3. Robust Symmetric Boosting Model (CatBoost) - Optuna tuned
-        self.cat = CatBoostRegressor(
-            iterations=150,
-            learning_rate=0.03,
-            depth=4,
-            l2_leaf_reg=4.0,
-            random_seed=random_state,
-            verbose=0
-        )
-        
+        # Keep models dictionary to prevent downstream scripts from breaking
         self.models = {
-            'ExtraTrees': self.et,
-            'RandomForest': self.rf,
-            'CatBoost': self.cat
+            'XGBoost': self.xgb
         }
         
     def fit(self, X, y):
-        print("\n  [Production-Grade 3-Model Ensemble Training (ET + RF + CatBoost)]")
+        print("\n  [Production-Grade Tuned XGBoost Regressor Training]")
         for name, model in self.models.items():
             print(f"    - Training {name}...")
             model.fit(X, y)
-        print("  Ensemble training complete!")
+        print("  Model training complete!")
         return self
         
     def predict(self, X):
-        # ExtraTrees (40%), RandomForest (40%), CatBoost (20%)
-        preds = []
-        weights = [0.40, 0.40, 0.20]
-        
-        preds.append(self.et.predict(X) * weights[0])
-        preds.append(self.rf.predict(X) * weights[1])
-        preds.append(self.cat.predict(X) * weights[2])
-        
-        return np.sum(preds, axis=0)
+        return self.xgb.predict(X)
         
     def get_individual_predictions(self, X):
         preds = {}
         for name, model in self.models.items():
             preds[name] = model.predict(X)
         return preds
+
 
