@@ -16,7 +16,7 @@ from tool import tools
 
 logger = logging.getLogger("IntegratedCustomerAgent")
 
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "gpt-4o-mini"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 프롬프트 동적 로드 헬퍼 함수
@@ -84,7 +84,7 @@ class MainAgent:
             if not portfolio:
                 raise ValueError(f"Customer with ID {customer_id} not found in database.")
             
-            # 최근 7일간 타행 출금(1천만원 이상) 거래 수집
+            # 최근 3개월간 타행 출금(1천만원 이상) 거래 수집
             large_withdrawals = tools.get_large_external_transactions(customer_id, threshold_amount=10000000.0)
             withdrawals_list = []
             for tx in large_withdrawals:
@@ -212,7 +212,7 @@ class MainAgent:
         return results
 
     @traceable(name="MainAgent.run_batch", run_type="chain", tags=["MainAgent"])
-    def run_batch(self, specified_c_ids: list = None, force_sub1: bool = False, force_sub2: bool = False, force_sub3: bool = False):
+    def run_batch(self, specified_c_ids: list = None, u_id: str = None, force_sub1: bool = False, force_sub2: bool = False, force_sub3: bool = False):
         """
         Orchestrate batch customer analysis (looping, targeting, and summary reporting).
         """
@@ -245,6 +245,17 @@ class MainAgent:
                 logger.error(f"[1단계 DB 스캔 ERROR] 대상 조회 실패 (Fallback 적용): {e}")
                 target_customers = []
             
+        # PB 필터링 (u_id가 제공된 경우)
+        if u_id and target_customers:
+            try:
+                assigned_c_ids = set(tools.get_customer_ids_by_pb(u_id))
+                logger.info(f"[PB 필터링] 담당 PB({u_id})에 속한 고객만 선별합니다. (매핑된 고객 수: {len(assigned_c_ids)}명)")
+                filtered_targets = [tc for tc in target_customers if tc["c_id"] in assigned_c_ids]
+                logger.info(f"[PB 필터링 결과] 대상 고객이 {len(target_customers)}명에서 {len(filtered_targets)}명으로 필터링되었습니다.")
+                target_customers = filtered_targets
+            except Exception as e:
+                logger.error(f"[PB 필터링 ERROR] 담당 PB 고객 조회 실패: {e}")
+
         if not target_customers:
             logger.info("[배치 중단] 오늘 분석 후보군에 부합하는 대상 고객이 한 명도 존재하지 않습니다.")
             logger.info("==========================================================")
@@ -278,6 +289,8 @@ class MainAgent:
                     ("user", "{user_content}")
                 ])
                 chain = prompt | structured_llm
+                logger.info(f"  * {len(target_customers)}명의 후보 고객에 대해 AI 선별(Structured Output) 생성 요청 중... (OpenAI API 대기, 약 30~50초 소요)")
+                sys.stdout.flush()
                 selection: SelectedCustomerList = chain.invoke({"user_content": selector_user})
                 
                 logger.info("[2단계 AI Target Selector] 분석 대상 선별 의사결정 완료:")

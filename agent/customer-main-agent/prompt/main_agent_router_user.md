@@ -12,7 +12,7 @@
   * 연금 자산: {pension:,} 원
   * 대출 잔액(부채): {loan:,} 원
   * 순자산: {net_worth:,} 원
-- **최근 7일간 타행 거액 이출금 내역**:
+- **최근 3개월간 타행 거액 이출금 내역**:
 {large_withdrawals_str}
 - **최근 상담 보고서 존재 여부**:
   * 존재 여부: {has_consultation_report}

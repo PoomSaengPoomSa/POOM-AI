@@ -138,7 +138,7 @@ LLM 라우터가 분석 대상 고객을 파악한 후 리턴하는 구조화된
 ```python
 class SubAgentRouting(BaseModel):
     run_asset_insight: bool            # SubAgent 1 구동 여부 (자산 규모 1억 이상 우량 고객 또는 예금 편중 고객 등)
-    run_churn_risk: bool               # SubAgent 2 구동 여부 (최근 7일 내 1천만 원 이상 타행 출금 등 이탈 위험 발생 시)
+    run_churn_risk: bool               # SubAgent 2 구동 여부 (최근 3개월 내 1천만 원 이상 타행 출금 등 이탈 위험 발생 시)
     run_product_matching: bool         # SubAgent 3 구동 여부 (상담 보고서가 존재하고 신규 상품 매칭이 필요할 때)
     reason_asset_insight: str          # SubAgent 1 구동 혹은 스킵 사유 설명 (구체적 1문장)
     reason_churn_risk: str             # SubAgent 2 구동 혹은 스킵 사유 설명 (구체적 1문장)
@@ -209,6 +209,33 @@ class Agent3State(TypedDict):
 
 ---
 
+## 🌐 3.5 MCP (Model Context Protocol) 도입 및 데이터 아키텍처 변화
+
+에이전트 시스템의 데이터 결합도를 낮추고 도구(Tools)의 확장성을 보장하기 위해 기존의 직접적인 데이터베이스(DB) 연결 방식을 **MCP (Model Context Protocol)** 기반의 클라이언트-서버 통신 아키텍처로 전면 개편하였습니다.
+
+### 1) 주요 변화 및 아키텍처 비교
+
+| 항목 | MCP 도입 이전 | MCP 도입 이후 |
+| :--- | :--- | :--- |
+| **데이터 접근 주체** | 에이전트 도구 모듈(`tool/tools.py`)이 DB에 직접 연결 | 에이전트는 MCP 클라이언트로서 서버에 데이터를 요청 |
+| **SQL 쿼리 실행 위치** | `tool/tools.py` 내부에서 직접 커서(`get_db_cursor`) 실행 | 별도 원시 DB 계층인 `tool/tools_direct.py`로 쿼리 격리 |
+| **에이전트-DB 결합도** | 에이전트 코드와 DB 드라이버(PyMySQL)가 강하게 결합 | 에이전트는 표준 MCP 통신 인터페이스 규격(FastMCP)만 의존 |
+| **서버 프로세스** | 별도 프로세스 없음 | Stdio 방식으로 호스팅되는 독립적인 `mcp_server.py` 구동 |
+
+### 2) MCP 연동 및 데이터 직렬화 메커니즘
+* **FastMCP 서버 구축 (`mcp_server.py`)**: `tool/tools_direct.py`에 격리된 원시 쿼리 함수들을 `@mcp.tool()` 데코레이터를 사용하여 표준 MCP 도구로 노출합니다.
+* **통합 클라이언트 매니저 (`tool/tools.py`)**:
+  * 에이전트가 사용하는 `tools.py`는 더 이상 직접 DB를 연결하지 않고, 백그라운드 스레드에서 `mcp_server.py`를 자식 프로세스(Stdio 파이프 통신)로 구동합니다.
+  * 내부의 `MCPClientManager` 싱글톤 객체가 비동기(asyncio) 이벤트 루프를 관리하며 에이전트의 동기적 호출을 MCP 메시지 규격으로 래핑하여 송수신합니다.
+* **직렬화/역직렬화(Serialization/Deserialization) 보완**:
+  * MCP 통신은 JSON 데이터를 표준으로 사용하므로, Python의 특수 타입(`datetime.datetime`, `datetime.date`, `decimal.Decimal`)은 JSON 직렬화에 부합하도록 ISO 8601 문자열 및 float/int로 변환하는 직렬화 로직(`mcp_server.py` 내 `serialize_datetime`)을 거칩니다.
+  * 클라이언트 측(`tool/tools.py` 내 `deserialize_datetime`)에서는 이를 다시 기존 Python 데이터 타입으로 역직렬화하여 반환하므로 하위 에이전트 비즈니스 코드에 아무런 부작용 없이 호환성을 유지합니다.
+* **Windows Stdio 교착상태(Deadlock) 방지**:
+  * Windows 환경에서 표준 입출력(Stdio)을 사용해 자식 프로세스로 MCP 서버를 제어할 때, LangSmith 등의 로깅/추적 모듈이 Stdio 파이프에 노이즈를 섞거나 락을 유발할 수 있습니다.
+  * 이를 차단하기 위해 MCP 서버 실행 환경을 복사할 때 `LANGSMITH_TRACING` 및 `LANGCHAIN_TRACING_V2` 환경 변수를 강제로 `false`로 격리하여 교착상태를 원천 차단하였습니다.
+
+---
+
 ## 🔄 4. 서브 에이전트별 세부 제어 흐름 (Flow of Control)
 
 ### 4.0. MainAgent: 통합 오케스트레이션 및 배치 흐름 상세 설명
@@ -225,7 +252,7 @@ class Agent3State(TypedDict):
   - 이를 통해 무분별한 API 호출을 억제하고 금융 자원(API 비용 및 컴퓨팅 파워)을 효율화합니다.
   - **선별 우선순위 기준**:
     1. **오늘 상담 예약 확정 내방 예정 (우선순위 1)**: 당일 현장 PB 상담 지원을 위해 최우선 선별.
-    2. **이탈 위험군 집중 케어 (우선순위 2)**: 이탈 위험 [위험] 등급 혹은 최근 7일 내 타행 거액 이출금이 발생한 우량 고객 우선 선별.
+    2. **이탈 위험군 집중 케어 (우선순위 2)**: 이탈 위험 [위험] 등급 혹은 최근 3개월 내 타행 거액 이출금이 발생한 우량 고객 우선 선별.
     3. **30일 이내 만기 예정 금융 상품 보유 (우선순위 3)**: 만기 시점 적시 재투자 유치를 위한 선별.
     4. **정보 업데이트 및 주기 만료 대상의 지속적 사후 관리 (우선순위 4)**: 오랫동안 케어가 없었거나 정기 진단이 필요한 고객에 대해 분석 연속성을 유지하도록 고려.
   - **최소 선정 비율 보장 지침**: 전체 배치가 중단 없이 활성화되도록 1차 후보군 중 **최소 10% 이상(후보가 10명 미만인 경우에도 최소 1명 이상)**을 반드시 최종 분석 대상으로 선정하도록 보장. 최우선 순위 대상자만으로 비율이 채워지지 않을 경우 우선순위 4 대상자 중 자산 규모가 큰 우량 고객 순으로 채워 충족시킵니다.
@@ -243,7 +270,7 @@ class Agent3State(TypedDict):
 * **사전 데이터 수집 (Fact Gathering)**
   - 라우팅 결정 전, 다음 핵심 도구(Fact)들을 호출합니다:
     - [get_customer](./tool/tools.py): 고객 프로필, 투자 성향 및 자산 비중 정보
-    - [get_large_external_transactions](./tool/tools.py): 최근 7일 내 1,000만 원 이상의 타행 거액 이출금 송금/출금 내역
+    - [get_large_external_transactions](./tool/tools.py): 최근 3개월 내 1,000만 원 이상의 타행 거액 이출금 송금/출금 내역
     - [get_recent_consultation_report](./tool/tools.py): 최근 작성된 대면 상담 기록지 존재 여부
 * **동적 라우팅 알고리즘 (`main_agent_router_system.md`)**
   - 수집된 데이터 팩트를 LLM에 주입하여 Pydantic 모델인 `SubAgentRouting` 형태로 의사결정을 획득합니다:
@@ -252,7 +279,7 @@ class Agent3State(TypedDict):
       - *마지막 방문(상담) 이력이 30일 이상 경과(혹은 없음)* (`consultation_memo` 기준)
       - *기존 우량 고객 자산 조건* (순자산 및 총자산이 1억 원 이상인 VVIP 또는 예적금 비중이 80% 이상으로 편중된 경우)
     - **`run_churn_risk` (SubAgent 2)**: 다음 중 하나 이상 부합 시 활성화
-      - *최근 7일 내 타행 거액 이출금(1천만 원 이상) 발생* (W 거래)
+      - *최근 3개월 내 타행 거액 이출금(1천만 원 이상) 발생* (W 거래)
       - *이탈 위험 수준이 '위험'인 고객* (가장 최근 `churn_level` 등급 평가가 '위험'인 경우)
       - *기존 리스크 조건* (순자산 대비 부채 비율이 리스크 임계치를 상회하는 경우)
     - **`run_product_matching` (SubAgent 3)**: 상담 보고서 존재 여부가 반드시 **있음 (True)** 인 상태를 전제로, 다음 중 하나 이상 부합 시 활성화 (보고서가 **없음 (False)**인 경우는 다른 조건과 관계없이 **무조건 False 강제**)
@@ -278,7 +305,7 @@ class Agent3State(TypedDict):
 2. `determine_tools`: LLM을 통해 수집할 데이터 도구 결정 (`ToolSelection2` 맵 생성).
 3. `execute_selected_tools`: 선택된 도구를 공통 호출하여 상태에 바인딩 (이때 `customer_features`는 1달 이내, `customer_transactions`는 3달 이내로 자동 한정).
 4. `analyze_churn`: 최근 1개월 특징 메모 및 3개월 거래 내역을 종합 대조하여 1차 이탈 등급 및 근거 판정.
-5. `verify_churn`: **[검증 및 교정 레이어]** LLM 이탈 검증관을 구동하여 1차 판정 결과가 정량적 이탈 임계치 팩트(7일 내 1,000만 원 이상 출금 시 최소 '주의', 누적 30% 이상 혹은 단일 1억 이상 유출 시 '위험' 격상 등)와 비즈니스 논리적으로 합치하는지 심사 및 교정하고, 80자 이내 경어체 포맷을 보장합니다.
+5. `verify_churn`: **[검증 및 교정 레이어]** LLM 이탈 검증관을 구동하여 1차 판정 결과가 정량적 이탈 임계치 팩트(최근 7일 내 누적 30% 이상 혹은 단일 1억 이상 유출 시 '위험' 격상 등)와 비즈니스 논리적으로 합치하는지 심사 및 교정하고, 80자 이내 경어체 포맷을 보장합니다.
 6. `save_results`: 최종 검증 완료된 결과를 `churn_level` 테이블에 `INSERT`합니다.
 
 ### 4.3. SubAgent 3: 주력 금융 상품 추천 흐름

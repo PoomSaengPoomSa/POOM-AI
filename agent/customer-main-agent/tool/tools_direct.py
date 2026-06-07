@@ -72,7 +72,8 @@ def get_large_external_transactions(customer_id: int, threshold_amount: float = 
     query = """
         SELECT amount, opp_bank_name, briefs, ct_datetime, balance_after
         FROM customer_transaction
-        WHERE c_id = %s AND opp_bank_name != '품' AND ct_type = 'W' AND amount >= %s
+        WHERE c_id = %s AND opp_bank_name != '우리은행' AND ct_type = 'W' AND amount >= %s
+          AND ct_datetime >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
         ORDER BY ct_datetime DESC
     """
     with get_db_cursor() as cursor:
@@ -230,7 +231,7 @@ def fetch_batch_target_c_ids() -> list:
     1. 이탈 위험 수준이 '위험'인 고객
     2. 마지막 방문(상담) 이력이 30일 이상 경과(혹은 없음)한 고객
     3. 오늘 상담이 예정된 고객
-    4. 최근 7일 내에 타행 거액 거래 내역이 있는 고객
+    4. 최근 3개월 내에 타행 거액 거래 내역이 있는 고객
     5. 만기 예정 상품을 보유한 고객
     6. 고객 정보가 update된 이후에 AI 분석이 없었던 고객(customer.update_time과 analysis_time 열 확인)
     """
@@ -266,11 +267,11 @@ def fetch_batch_target_c_ids() -> list:
             
             UNION ALL
             
-            -- (4) 최근 7일 내에 타행 거액 거래 내역이 있는 고객
-            SELECT DISTINCT c_id, '최근 7일 내 타행 거액 이출금(1천만 원 이상) 발생' AS reason 
+            -- (4) 최근 3개월 내에 타행 거액 거래 내역이 있는 고객
+            SELECT DISTINCT c_id, '최근 3개월 내 타행 거액 이출금(1천만 원 이상) 발생' AS reason 
             FROM customer_transaction 
-            WHERE opp_bank_name != '품' AND ct_type = 'W' AND amount >= 10000000 
-              AND ct_datetime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE opp_bank_name != '우리은행' AND ct_type = 'W' AND amount >= 10000000 
+              AND ct_datetime >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
               
             UNION ALL
             
@@ -309,5 +310,20 @@ def fetch_batch_target_c_ids() -> list:
                 
         # 리스트 형태로 반환: [{"c_id": c_id, "name": name, ... "reasons": reasons}, ...]
         return list(customer_map.values())
+
+def get_customer_ids_by_pb(u_id: str) -> list:
+    """
+    Retrieve list of customer IDs assigned to a specific PB (u_id) from the in_charge table.
+    """
+    query = """
+        SELECT c_id 
+        FROM in_charge 
+        WHERE u_id = %s
+    """
+    with get_db_cursor() as cursor:
+        cursor.execute(query, (u_id,))
+        results = cursor.fetchall()
+        return [row["c_id"] for row in results]
+
 
 
