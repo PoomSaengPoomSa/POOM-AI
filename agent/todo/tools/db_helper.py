@@ -21,15 +21,15 @@ if not back_path:
 if back_path not in sys.path:
     sys.path.insert(0, back_path)
 
-# app 패키지가 이미 로드되어 있는 경우(Uvicorn 기동 등) 네임스페이스 충돌 방지를 위해 백엔드 app 경로를 병합
-if "app" in sys.modules:
-    try:
-        import app
-        back_app_path = os.path.join(back_path, "app")
-        if os.path.exists(back_app_path) and back_app_path not in app.__path__:
-            app.__path__.append(back_app_path)
-    except Exception as e:
-        print(f"[Warning] db_helper에서 app 패키지 경로 병합 실패: {e}")
+# app 패키지 네임스페이스 충돌 방지를 위해 백엔드 app 경로와 AI app 경로를 병합
+try:
+    import app
+    back_app_path = os.path.join(back_path, "app")
+    ai_app_path = os.path.abspath(os.path.join(current_dir, "..", "..", "..", "app"))
+    if os.path.exists(back_app_path):
+        app.__path__ = [ai_app_path, back_app_path]
+except Exception as e:
+    print(f"[Warning] db_helper에서 app 패키지 경로 병합 실패: {e}")
 
 # Pydantic Settings가 .env 파일을 읽을 때 extra 필드 오류(extra_forbidden)가 나는 현상을 방지하기 위해
 # app.database 임포트 시점에만 임시적으로 .env 파일에서 허용되지 않는 필드(OPENAI_API_KEY 등)를 걸러냈다가 복원합니다.
