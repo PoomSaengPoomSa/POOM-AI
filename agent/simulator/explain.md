@@ -40,8 +40,8 @@ flowchart TD
     
     subgraph knowledge_node [knowledge 노드 내부 동작]
         direction TB
-        QR["Query Reformulation<br>(이력 기반 쿼리 재구성)"] --> K1["ChromaDB RAG 검색<br>(세법 및 하우스뷰 PDF / where 필터 적용)"]
-        K1 --> K2{"임계값 만족?<br>(L2 거리 <= 0.85)"}
+        QD["Query Decomposer<br>(멀티 쿼리 분할 및 필터 예측)"] --> K1["ChromaDB RAG 검색<br>(세법 및 하우스뷰 PDF / 복합 where 필터 적용)"]
+        K1 --> K2{"임계값 만족?<br>(코사인 유사도 >= 0.50)"}
         K2 -- No / Error --> K3["Tavily Web Search<br>(실시간 웹 검색 Fallback)"]
         K2 -- Yes --> K4["RAG 컨텍스트 병합"]
         K3 --> K4
@@ -76,8 +76,8 @@ flowchart TD
     *   의도가 `knowledge`인 경우, `knowledge` 노드로 분기합니다.
 4.  **`knowledge`** (통합 지식 융합 노드)
     *   의도가 `knowledge`인 경우에 실행되며, 다음 3가지 소스를 동시에 조회하여 하나의 거대한 컨텍스트로 융합합니다:
-        *   **검색 쿼리 재구성(Query Reformulation)**: RAG 검색 전에 최근 대화 이력을 바탕으로 현재 질문의 생략된 주어나 대명사("그거", "그 상품" 등)를 구체적인 명사로 재생성하여 RAG 및 Tavily 검색에 활용합니다.
-        *   **VectorDB RAG**: ChromaDB에서 검색을 수행합니다. L2 거리 임계값 `0.85` 이하인 지식 청크만 선별하며, 만족하는 지식이 없거나 오류가 발생할 경우 Tavily API 실시간 웹 검색을 Fallback으로 활용합니다. 쿼리 시 `where={"source": {"$ne": "db_product"}}` 필터를 네이티브 적용해 레거시 상품 데이터를 사전 배제합니다.
+        *   **멀티 쿼리 분할 및 필터 예측 (Query Decomposition)**: LLM을 통해 질문을 1~3개의 세부 검색어(`sub_queries`)로 나누고, 각 세부 검색어에 적합한 메타데이터 필터(`asset_category`, `target_segment`)를 예측합니다. (프롬프트 명세: [query_decomposer_system_prompt.md](./prompt/query_decomposer_system_prompt.md))
+        *   **VectorDB RAG (Pre-filtering)**: 각 쿼리에 매핑된 필터를 사용해 ChromaDB에서 `$and` / `$in` 복합 조건(예: `where={"$and": [{"asset_category": "세무"}, {"target_segment": {"$in": ["공통", target_segment]}}]}`)으로 사전 필터링 검색을 수행합니다. 코사인 유사도 임계값은 의미론적 검색에 최적화된 `0.50` 이상으로 적용됩니다. 만족하는 지식이 없거나 오류가 발생할 경우 Tavily API 실시간 웹 검색을 Fallback으로 활용합니다.
         *   **MySQL 상품 정보**: MySQL DB에서 각각의 전용 연동 도구를 통해 고객 보유 상품 리스트, 전체 상품 스펙, AI 적합도 점수 및 추천 사유를 병합 추출합니다. ([tools.py](./tools.py) 내 `get_customer_held_products`, `get_all_products`, `get_customer_product_matching` 호출)
         *   **MySQL 고객 1개월 특징**: `customer_information` 테이블에서 최근 1개월 이내 기록된 고객 행동 및 특이사항 메모를 수집합니다.
     *   수집된 DB 정보와 RAG 정보를 가공하여 `retrieved_knowledge`와 `recent_features_1m` 상태를 업데이트합니다.
@@ -117,12 +117,12 @@ sequenceDiagram
     
     Agent->>Agent: load_context (프로필 & 히스토리 읽기)
     Agent->>Agent: route_intent (의도 판별: 최근 5턴 이력 활용)
-    Agent->>Agent: reformulate_query (대화 이력 기반 검색어 재구성)
+    Agent->>Agent: Query Decomposer (멀티 쿼리 분할 및 필터 예측)
     
     par DB 조회 및 RAG 검색 병렬 처리
-        Agent->>Vector: query_knowledge_base (ChromaDB 쿼리 with where 필터)
+        Agent->>Vector: query_knowledge_base (ChromaDB 쿼리 with Pre-filtering 복합 필터)
         Vector-->>Agent: 텍스트 청크 반환 (유사도 검증)
-        alt 유사도 임계값(0.6) 미달 시 Web Fallback
+        alt 유사도 임계값(0.50) 미달 시 Web Fallback
             Agent->>Web: fetch_from_tavily (실시간 정보 검색)
             Web-->>Agent: 검색 결과 반환
         end
@@ -154,7 +154,7 @@ sequenceDiagram
 ## 3. 주요 기능 및 특징 (Key Features)
 
 ### 3.1 통합 지식 노드(knowledge)의 데이터 조회 범위
-*   **VectorDB RAG**: 특정 의도 메타데이터 필터에 묶이지 않고 세법 자료(`2026년 개정세법 해설.pdf`)와 하우스 뷰 리포트 전체를 검색 범위에 포함하여 수집합니다. ChromaDB 쿼리 시 `where={"source": {"$ne": "db_product"}}` 필터를 적용하여 유효한 PDF 문서 데이터만 검색하며, L2 거리 `0.85` 이하 기준을 준수합니다.
+*   **VectorDB RAG**: 특정 의도 메타데이터 필터에 묶이지 않고 세법 자료(`2026년 개정세법 해설.pdf`)와 하우스 뷰 리포트 전체를 검색 범위에 포함하여 수집합니다. ChromaDB 쿼리 시 `where={"$and": [{"source": {"$ne": "db_product"}}, {"asset_category": category}, {"target_segment": {"$in": ["공통", segment]}}]}` 복합 프리필터를 적용하여 유효한 PDF 문서 데이터만 타겟 검색하며, 코사인 유사도 `0.50` 이상 기준을 준수합니다.
 *   **MySQL 상품 정보**: 실시간 DB에서 상품 상세 및 고객 매칭 정보를 직접 조회하여 RAG 결과와 통합 병합합니다.
 *   **MySQL 고객 특징**: 최근 1개월 특징 리스트를 조회하여 함께 컨텍스트에 로드합니다.
 
@@ -171,6 +171,11 @@ RAG 검색 결과가 없거나, 1개월 특징 조회가 생략(또는 데이터
 에이전트는 마크다운 렌더러가 부재한 행내 터미널이나 전용 텍스트 뷰어에 최적화된 결과물을 출력합니다.
 *   샵 기호(`#`), 볼드 기호(`**`), 표 구조 기호(`| --- |`) 등 **모든 마크다운 문법의 출력을 금지**합니다.
 *   대괄호 `[소제목]`와 수동 탭 정렬, 줄바꿈을 활용하여 가독성이 뛰어난 Plain Text 구조를 제공합니다.
+
+### 3.6 LangSmith 추적 (Tracing) 및 디버깅 지원
+에이전트 구동 시 타 에이전트와 동일하게 LangSmith 연동을 지원하여 체인 실행 및 LLM 호출 과정을 시각적으로 모니터링할 수 있습니다.
+*   프로젝트 루트 `.env` 파일에 정의된 `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_ENDPOINT`, `LANGSMITH_PROJECT` 변수값을 로드하여 표준 `LANGCHAIN_` 환경 변수로 자동 매핑합니다.
+*   이를 통해 LangGraph의 실행 단계(State Graph Node 및 Edge 라우팅) 및 개별 ChatOpenAI 호출 단위를 LangSmith 대시보드에서 실시간 추적 및 디버깅할 수 있습니다.
 
 ---
 
@@ -192,6 +197,8 @@ RAG 검색 결과가 없거나, 1개월 특징 조회가 생략(또는 데이터
     *   고객 프로필 정보, DB 특징 메모, RAG 지식이 주입되는 동적 사용자 컨텍스트 템플릿입니다.
 *   [prompt/intent_router_system_prompt.md](./prompt/intent_router_system_prompt.md)
     *   PB 질문의 의도(`knowledge`, `general`)를 분류하기 위한 라우터용 시스템 프롬프트입니다.
+*   [prompt/query_decomposer_system_prompt.md](./prompt/query_decomposer_system_prompt.md)
+    *   복합 질문을 1~3개의 세부 검색용 쿼리로 분할하고 최적의 메타데이터 필터를 예측하는 쿼리 변환기용 시스템 프롬프트입니다.
 *   [prompt/assistant_acknowledgment.md](./prompt/assistant_acknowledgment.md)
     *   대화 도입부에서 에이전트의 첫 응답 인트로로 전송되는 어시스턴트 인지 확인용 고정 대화 템플릿입니다.
 *   [data/](./data/)

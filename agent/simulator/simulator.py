@@ -22,6 +22,16 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv(find_dotenv())
 
+# Map LANGSMITH_ environment variables to LANGCHAIN_ standard tracing variables
+if os.getenv("LANGSMITH_TRACING") == "true":
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+if os.getenv("LANGSMITH_API_KEY"):
+    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY").strip('"\'')
+if os.getenv("LANGSMITH_ENDPOINT"):
+    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT").strip('"\'')
+if os.getenv("LANGSMITH_PROJECT"):
+    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT").strip('"\'')
+
 DEFAULT_MODEL = "gpt-4o-mini"
 
 from agent.simulator.tools import (
@@ -53,6 +63,14 @@ class IntentRoute(BaseModel):
     reason: str = Field(
         description="이 대화 의도로 분류한 사유 (한 문장)"
     )
+
+class SubQuery(BaseModel):
+    query: str = Field(description="RAG 검색을 위해 구체적으로 분할 및 구체화된 검색 키워드 쿼리")
+    asset_category: str = Field(description="이 쿼리가 타겟팅하는 금융 분야. '세무', '매크로', '금융상품', '컴플라이언스', '공통' 중 하나")
+    target_segment: str = Field(description="이 쿼리가 타겟팅하는 고객 세그먼트. '시니어', '영리치', '기업인', '전문직', '공통' 중 하나")
+    
+class QueryDecomposition(BaseModel):
+    sub_queries: List[SubQuery] = Field(description="원본 질문을 분할한 1~3개의 RAG 검색 쿼리 리스트")
 
 # 3. Prompt Utility Functions
 def get_simulator_system_prompt() -> str:
@@ -93,6 +111,14 @@ def get_intent_router_system_prompt() -> str:
     prompt_path = os.path.join(current_dir, "prompt", "intent_router_system_prompt.md")
     if not os.path.exists(prompt_path):
         raise FileNotFoundError(f"Intent router prompt file not found: {prompt_path}")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+def get_query_decomposer_system_prompt() -> str:
+    """Read the query decomposer prompt from prompt/query_decomposer_system_prompt.md."""
+    prompt_path = os.path.join(current_dir, "prompt", "query_decomposer_system_prompt.md")
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError(f"Query decomposer prompt file not found: {prompt_path}")
     with open(prompt_path, "r", encoding="utf-8") as f:
         return f.read().strip()
 
@@ -190,57 +216,12 @@ def route_intent_node(state: SimulatorState) -> Dict[str, Any]:
         return {"intent": "general"}
 
 
-def reformulate_query(question: str, history: List[Dict[str, str]], api_key: str) -> str:
-    """
-    Reformulate the user's question into a standalone search query using the conversation history.
-    """
-    if not history:
-        return question
-        
-    try:
-        llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=api_key)
-        
-        # Format history into a simple transcript
-        history_lines = []
-        for turn in history[-5:]:
-            role_label = "PB" if turn["role"] == "user" else "AI"
-            content = turn["content"]
-            history_lines.append(f"{role_label}: {content}")
-        history_str = "\n".join(history_lines)
-        
-        system_prompt = (
-            "당신은 검색 쿼리 변환기입니다. [대화 이력]과 [현재 질문]이 주어지면, "
-            "이전 대화 맥락을 파악하여 현재 질문 속의 대명사(그, 해당, 그때 등)나 생략된 주어/목적어를 "
-            "원래의 명사로 구체화한 하나의 '검색용 단일 쿼리'를 한국어로 생성하십시오.\n"
-            "추가 설명이나 인사 없이 오직 정제된 검색 쿼리만 출력하십시오."
-        )
-        
-        user_content = (
-            f"[대화 이력]\n{history_str}\n\n"
-            f"[현재 질문]\n{question}\n\n"
-            f"변환된 검색 쿼리:"
-        )
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("user", "{user_content}")
-        ])
-        
-        chain = prompt | llm
-        response = chain.invoke({"user_content": user_content})
-        reformulated = response.content.strip()
-        sys.stderr.write(f"[Query Reformulation] 원본: '{question}' -> 정제: '{reformulated}'\n")
-        return reformulated if reformulated else question
-    except Exception as e:
-        sys.stderr.write(f"[Query Reformulation 오류] 쿼리 변환 실패: {str(e)}. 원본 질문을 사용합니다.\n")
-        return question
-
-
 def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
     """
     Node 3: Unified Knowledge Node
-    Fetches both VectorDB RAG (세법/시장전망) and MySQL DB (전체 상품, 보유 현황, AI 추천 매칭 및 1개월 특징)
-    concurrently to build a complete unified context for non-general queries.
+    Decomposes the user query into 1~3 sub-queries, predicts metadata tags (asset_category, target_segment)
+    for each using the customer profile and history, performs parallel pre-filtered RAG searches,
+    and merges the results to form a clean unified context.
     """
     if state.get("errors"):
         return {}
@@ -248,32 +229,103 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
     question = state["question"]
     history = state.get("history", [])
     customer_id = state["customer_id"]
+    context_content = state.get("context_content", "")
     chroma_db_dir = os.path.join(current_dir, "data", "chroma_db")
-    THRESHOLD = 1.25
+    THRESHOLD = 0.50
     
     api_key = os.getenv("OPENAI_API_KEY")
     
-    # 1. Reformulate question using history to handle pronouns and missing contexts
-    search_query = reformulate_query(question, history, api_key)
-    
     retrieved_knowledge_parts = []
     
-    # 2. Retrieve VectorDB RAG (threshold 0.85 filter, fallback to Tavily)
+    # 1. Decompose query and predict filter tags using structured LLM output
     try:
-        rag_knowledge = query_knowledge_base(search_query, chroma_db_dir, THRESHOLD)
-        if rag_knowledge:
-            retrieved_knowledge_parts.append(rag_knowledge)
-        else:
-            sys.stderr.write(f"[RAG->Tavily] 유사도 기준({THRESHOLD}) 만족 지식 부재로 Tavily 실시간 웹 검색 수행 (쿼리: '{search_query}')\n")
-            web_search = fetch_from_tavily(search_query)
-            retrieved_knowledge_parts.append(web_search)
-    except Exception as e:
-        sys.stderr.write(f"[RAG 오류] 지식 검색 중 에러 발생: {str(e)}\n")
-        sys.stderr.write(f"[RAG->Tavily] 에러 발생으로 인해 Tavily 실시간 웹 검색 수행\n")
-        web_search = fetch_from_tavily(search_query)
-        retrieved_knowledge_parts.append(web_search)
+        llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=api_key)
+        structured_llm = llm.with_structured_output(QueryDecomposition)
         
-    # 3. Retrieve MySQL Financial Products & matching information (using split tools)
+        system_prompt = get_query_decomposer_system_prompt()
+        
+        # Format conversation history for context
+        history_lines = []
+        for turn in history[-5:]:
+            role_label = "PB" if turn["role"] == "user" else "AI"
+            content = turn["content"]
+            history_lines.append(f"{role_label}: {content}")
+        history_str = "\n".join(history_lines)
+        
+        user_content = (
+            f"[고객 정보]\n{context_content}\n\n"
+            f"[이전 대화 이력]\n{history_str if history_str else '이전 이력 없음'}\n\n"
+            f"[PB 현재 질문]\n{question}"
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", "{user_content}")
+        ])
+        
+        chain = prompt | structured_llm
+        decomposition: QueryDecomposition = chain.invoke({"user_content": user_content})
+        
+        sys.stderr.write(f"[Query Decomposer] 분할 완료: {len(decomposition.sub_queries)}개 서브 쿼리 생성\n")
+        
+        # 2. Run query_knowledge_base for each sub-query with target metadata filtering
+        import re
+        rag_chunks = []
+        seen_chunks = set()
+        
+        for idx, sq in enumerate(decomposition.sub_queries, 1):
+            sys.stderr.write(f"  - 서브 쿼리 {idx}: '{sq.query}' | 카테고리: {sq.asset_category} | 세그먼트: {sq.target_segment}\n")
+            
+            # Query vector database with native filters
+            rag_res = query_knowledge_base(
+                question=sq.query,
+                chroma_db_dir=chroma_db_dir,
+                threshold=THRESHOLD,
+                asset_category=sq.asset_category,
+                target_segment=sq.target_segment
+            )
+            
+            if rag_res:
+                # Split retrieved results by double newlines and deduplicate
+                for chunk in rag_res.split("\n\n"):
+                    chunk = chunk.strip()
+                    if chunk:
+                        # Deduplicate by document content to avoid identical chunks from multiple queries
+                        # We normalize whitespace for robust deduplication key
+                        norm_chunk = re.sub(r'\s+', ' ', chunk)
+                        if norm_chunk not in seen_chunks:
+                            seen_chunks.add(norm_chunk)
+                            rag_chunks.append(chunk)
+                            
+        # 3. Format and join retrieved RAG chunks
+        if rag_chunks:
+            formatted_chunks = []
+            for c_idx, chunk in enumerate(rag_chunks, 1):
+                # Replace original [1], [2] numbering with a continuous index [1]~[N]
+                cleaned_chunk = re.sub(r'^\[\d+\]', f"[{c_idx}]", chunk)
+                formatted_chunks.append(cleaned_chunk)
+            retrieved_knowledge_parts.append("\n\n".join(formatted_chunks))
+        else:
+            # Fallback to Tavily with the first decomposed query or the original query if RAG results are empty
+            fallback_query = decomposition.sub_queries[0].query if decomposition.sub_queries else question
+            sys.stderr.write(f"[RAG->Tavily] 임계값({THRESHOLD}) 만족 지식 없음. Tavily 웹 검색 실행 (쿼리: '{fallback_query}')\n")
+            web_search = fetch_from_tavily(fallback_query)
+            retrieved_knowledge_parts.append(web_search)
+            
+    except Exception as e:
+        sys.stderr.write(f"[Advanced RAG 분석 오류] {str(e)}. 기본 원본 검색 및 Tavily 폴백을 시도합니다.\n")
+        try:
+            rag_res = query_knowledge_base(question, chroma_db_dir, THRESHOLD)
+            if rag_res:
+                retrieved_knowledge_parts.append(rag_res)
+            else:
+                web_search = fetch_from_tavily(question)
+                retrieved_knowledge_parts.append(web_search)
+        except Exception:
+            web_search = fetch_from_tavily(question)
+            retrieved_knowledge_parts.append(web_search)
+            
+    # 4. Retrieve MySQL Financial Products & matching information
     try:
         held_products = get_customer_held_products(customer_id)
         all_products = get_all_products()
@@ -285,10 +337,9 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
         sys.stderr.write(f"[DB 오류] 금융 상품 매칭 조회 실패: {str(e)}\n")
         retrieved_knowledge_parts.append("실시간 금융 상품 정보를 조회하지 못했습니다.")
         
-    # Combine knowledge parts
     combined_knowledge = "\n\n".join(retrieved_knowledge_parts)
     
-    # 4. Retrieve customer's features in the last 1 month from MySQL customer_information table
+    # 5. Retrieve customer's features in the last 1 month from MySQL
     recent_features_str = ""
     try:
         from agent.customer.tools import get_customer_features
@@ -342,7 +393,9 @@ def extract_sources_from_knowledge(retrieved_knowledge: str) -> list[str]:
             parts = line.split("출처:")
             if len(parts) > 1:
                 source_val = parts[1].strip()
-                if " (유사 거리:" in source_val:
+                if " (코사인 유사도:" in source_val:
+                    source_val = source_val.split(" (코사인 유사도:")[0].strip()
+                elif " (유사 거리:" in source_val:
                     source_val = source_val.split(" (유사 거리:")[0].strip()
                 sources.append(source_val)
             else:

@@ -59,6 +59,40 @@ def format_table_as_markdown(table) -> str:
 
 
 def process_pdfs_to_chroma():
+    # Base metadata tagging taxonomy for the raw files
+    BASE_TAGS = {
+        "1. 2026년 6월 House View.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2025 우리금융 트렌드 보고서1.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2025 한국 부자 보고서.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2026 대한민국 웰스 리포트_하나금융연구소.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2026년 개정세법 해설.pdf": {
+            "asset_category": "세무",
+            "data_lifecycle": "영속 가이드",
+            "target_segment": "공통"
+        },
+        "230919_금융소비자보호법 설명자료_f.pdf": {
+            "asset_category": "컴플라이언스",
+            "data_lifecycle": "영속 가이드",
+            "target_segment": "공통"
+        }
+    }
+
     # Base paths relative to the simulator directory (parent of utils)
     simulator_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     raw_data_dir = os.path.join(simulator_dir, "data", "raw_data")
@@ -78,8 +112,8 @@ def process_pdfs_to_chroma():
         print("기존 ChromaDB 콜렉션 'poom_knowledge' 삭제 완료.")
     except Exception:
         pass
-    collection = chroma_client.create_collection(name="poom_knowledge")
-    print("ChromaDB 콜렉션 'poom_knowledge' 신규 생성 완료.")
+    collection = chroma_client.create_collection(name="poom_knowledge", metadata={"hnsw:space": "cosine"})
+    print("ChromaDB 콜렉션 'poom_knowledge' 신규 생성 완료 (코사인 유사도 설정).")
 
     # PDF 파일 목록 탐색 및 텍스트 추출 불가 이미지 스캔본 필터링
     pdf_pattern = os.path.join(raw_data_dir, "*.pdf")
@@ -156,14 +190,39 @@ def process_pdfs_to_chroma():
                     
                     # 5. 텍스트 분할 실행
                     chunks = text_splitter.split_text(page_content)
+                    
+                    base_tags = BASE_TAGS.get(filename, {
+                        "asset_category": "공통",
+                        "data_lifecycle": "영속 가이드",
+                        "target_segment": "공통"
+                    })
+                    
                     for chunk_idx, chunk_content in enumerate(chunks):
                         chunk_id = f"{filename}_p{page_idx}_c{chunk_idx}"
+                        
+                        # Dynamic target segment assignment based on content
+                        target_segment = base_tags.get("target_segment", "공통")
+                        lower_content = chunk_content.lower()
+                        
+                        if filename == "2026 대한민국 웰스 리포트_하나금융연구소.pdf":
+                            if "영리치" in lower_content or "young rich" in lower_content:
+                                target_segment = "영리치"
+                            elif "시니어" in lower_content or "고령" in lower_content or "올드리치" in lower_content:
+                                target_segment = "시니어"
+                        elif filename == "2026년 개정세법 해설.pdf":
+                            corp_keywords = ["가업상속", "가업승계", "법인세", "배당소득", "최대주주", "가업 상속", "가업 승계"]
+                            if any(kw in chunk_content for kw in corp_keywords):
+                                target_segment = "기업인"
+                                
                         all_chunks.append({
                             "id": chunk_id,
                             "document": chunk_content,
                             "metadata": {
                                 "source": filename,
-                                "page": page_idx
+                                "page": page_idx,
+                                "asset_category": base_tags.get("asset_category", "공통"),
+                                "data_lifecycle": base_tags.get("data_lifecycle", "영속 가이드"),
+                                "target_segment": target_segment
                             }
                         })
                         

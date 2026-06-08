@@ -42,9 +42,15 @@ def fetch_from_tavily(query: str) -> str:
         return f"Tavily 웹 검색 중 오류가 발생했습니다: {str(e)}"
 
 
-def query_knowledge_base(question: str, chroma_db_dir: str, threshold: float = 0.6) -> Optional[str]:
+def query_knowledge_base(
+    question: str, 
+    chroma_db_dir: str, 
+    threshold: float = 0.50,
+    asset_category: Optional[str] = None,
+    target_segment: Optional[str] = None
+) -> Optional[str]:
     """
-    Query ChromaDB vector database across all document sources (excluding db_product metadata).
+    Query ChromaDB vector database across all document sources (excluding db_product metadata) with metadata filtering.
     Returns formatted knowledge string if within similarity threshold, else None.
     """
     api_key = os.getenv("OPENAI_API_KEY")
@@ -65,12 +71,23 @@ def query_knowledge_base(question: str, chroma_db_dir: str, threshold: float = 0
         )
         query_embedding = emb_response.data[0].embedding
         
-        # 2. ChromaDB 쿼리 (where 조건을 활용하여 db_product 제외 필터를 네이티브 적용)
-        # 처음부터 db_product가 아닌 문서 중에서 최적의 3개 검색
+        # 2. ChromaDB 쿼리 (where 조건을 활용하여 db_product 제외 및 카테고리/세그먼트 필터 연동)
+        filters = [{"source": {"$ne": "db_product"}}]
+        
+        if asset_category and asset_category != "공통":
+            filters.append({"asset_category": asset_category})
+            
+        if target_segment and target_segment != "공통":
+            filters.append({"target_segment": {"$in": ["공통", target_segment]}})
+            
+        where_filter = {"$and": filters} if len(filters) > 1 else filters[0]
+        
+        sys.stderr.write(f"[RAG] 쿼리 필터 적용: {where_filter}\n")
+        
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=3,
-            where={"source": {"$ne": "db_product"}}
+            where=where_filter
         )
         
         # 3. 문자열 포맷팅 및 임계값 필터링
@@ -82,11 +99,13 @@ def query_knowledge_base(question: str, chroma_db_dir: str, threshold: float = 0
                 results["metadatas"][0], 
                 results["distances"][0]
             ):
-                if dist <= threshold:
+                # Cosine similarity is (1 - Cosine distance)
+                cosine_sim = 1.0 - dist
+                if cosine_sim >= threshold:
                     source = meta.get("source", "알 수 없음")
                     page = meta.get("page", "?")
                     collected_count += 1
-                    knowledge_parts.append(f"[{collected_count}] 출처: {source} (Page {page}) (유사 거리: {dist:.4f})\n내용: {doc.strip()}")
+                    knowledge_parts.append(f"[{collected_count}] 출처: {source} (Page {page}) (코사인 유사도: {cosine_sim:.4f})\n내용: {doc.strip()}")
         
         if knowledge_parts:
             sys.stderr.write(f"[RAG] 임계값({threshold}) 만족 지식 {len(knowledge_parts)}개 검색 완료 (전체 문서 대상)\n")
