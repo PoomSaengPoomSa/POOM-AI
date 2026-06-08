@@ -2,6 +2,7 @@ import os
 import sys
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 
 # POOM-AI 루트 디렉토리를 path에 추가하여 내부 모듈 참조 가능하게 설정
 POOM_AI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,5 +88,38 @@ def run_ai_todo(req: AiTodoRequest):
             from agent.todo.main import run_agent_for_pb
             result = run_agent_for_pb(req.u_id, req.date)
             return {"status": "success", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class CustomerMainRequest(BaseModel):
+    u_id: Optional[str] = "pb_b1_1"
+    c_ids: Optional[str] = None
+    force_sub1: Optional[bool] = False
+    force_sub2: Optional[bool] = False
+    force_sub3: Optional[bool] = False
+
+@app.post("/api/v1/customer-main/run")
+def run_customer_main(req: CustomerMainRequest):
+    import sys
+    import os
+    main_agent_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent", "customer-main-agent"))
+    if main_agent_dir not in sys.path:
+        sys.path.insert(0, main_agent_dir)
+    try:
+        from agent.main_agent import MainAgent
+        agent = MainAgent()
+        
+        specified_ids = None
+        if req.c_ids:
+            specified_ids = [int(i.strip()) for i in req.c_ids.split(",") if i.strip()]
+            
+        agent.run_batch(
+            specified_c_ids=specified_ids,
+            u_id=req.u_id,
+            force_sub1=req.force_sub1,
+            force_sub2=req.force_sub2,
+            force_sub3=req.force_sub3
+        )
+        return {"status": "success", "message": f"Customer Main Agent batch analysis completed for PB {req.u_id}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
