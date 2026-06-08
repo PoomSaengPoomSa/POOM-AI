@@ -53,6 +53,7 @@ hf-xet==1.5.0
 httpcore==1.0.9
 httptools==0.8.0
 httpx==0.28.1
+httpx-sse==0.4.3
 huey==2.6.0
 huggingface_hub==1.17.0
 idna==3.16
@@ -85,6 +86,7 @@ Mako==1.3.12
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 matplotlib==3.10.8
+mcp==1.27.2
 mdurl==0.1.2
 mlflow==3.12.0
 mlflow-skinny==3.12.0
@@ -134,6 +136,7 @@ PyPika==0.51.1
 pyproject_hooks==1.2.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
+python-multipart==0.0.32
 pytz==2026.2
 PyYAML==6.0.3
 querystring-parser==1.2.4
@@ -157,6 +160,7 @@ smmap==5.0.3
 sniffio==1.3.1
 SQLAlchemy==2.0.50
 sqlparse==0.5.5
+sse-starlette==3.4.4
 starlette==0.52.1
 statsmodels==0.14.6
 tabulate==0.10.0
@@ -185,4 +189,3 @@ xxhash==3.7.0
 yarl==1.24.2
 zipp==4.1.0
 zstandard==0.25.0
-mcp==1.27.2

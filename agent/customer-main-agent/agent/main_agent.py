@@ -40,7 +40,7 @@ class SelectedCustomerList(BaseModel):
 
 # 1. Pydantic 라우팅 구조 정의
 class SubAgentRouting(BaseModel):
-    run_asset_insight: bool = Field(description="자산 리밸런싱 인사이트 에이전트(Sub Agent 1) 구동 여부. 고객 정보(자산 등)가 수정된 이후에 AI 분석이 없었거나, 1억 이상 우량 고객인 경우 등.")
+    run_asset_insight: bool = Field(description="자산 리밸런싱 인사이트 에이전트(Sub Agent 1) 구동 여부. 마지막 상담 이후 30일이 지났거나, 1억 이상 우량 고객인 경우 등.")
     run_churn_risk: bool = Field(description="이탈 위험 수준 분석 에이전트(Sub Agent 2) 구동 여부. 최근 거액 거래(출금)가 발생했거나, 이탈 징후가 있을 때.")
     run_product_matching: bool = Field(description="주력 금융 상품 적합성 평가 에이전트(Sub Agent 3) 구동 여부. 신규 상담 기록이 있고 추천 가능한 상품 매칭이 필요할 때. 단, 최근 상담 보고서 존재 여부가 False이면 무조건 False여야 함.")
     reason_asset_insight: str = Field(description="자산 리밸런싱 에이전트(Sub Agent 1)의 구동 혹은 스킵 사유 설명 (구체적 1문장)")
