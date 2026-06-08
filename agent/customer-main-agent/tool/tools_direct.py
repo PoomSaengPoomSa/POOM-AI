@@ -233,7 +233,6 @@ def fetch_batch_target_c_ids() -> list:
     3. 오늘 상담이 예정된 고객
     4. 최근 3개월 내에 타행 거액 거래 내역이 있는 고객
     5. 만기 예정 상품을 보유한 고객
-    6. 고객 정보가 update된 이후에 AI 분석이 없었던 고객(customer.update_time과 analysis_time 열 확인)
     """
     query = """
         SELECT c.c_id, c.name, c.total_assets, c.net_worth, c.deposit, c.loan, r.reason
@@ -279,13 +278,6 @@ def fetch_batch_target_c_ids() -> list:
             SELECT DISTINCT c_id, '30일 이내 만기 예정 금융 상품 보유' AS reason 
             FROM customer_product 
             WHERE expiration_date >= CURDATE() AND expiration_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-            
-            UNION ALL
-            
-            -- (6) 고객 정보가 update된 이후에 AI 분석이 없었던 고객
-            SELECT c_id, '고객 정보 업데이트 후 AI 분석 미수행' AS reason
-            FROM customer
-            WHERE update_time IS NOT NULL AND (analysis_time IS NULL OR update_time > analysis_time)
         ) r ON c.c_id = r.c_id
     """
     with get_db_cursor() as cursor:
