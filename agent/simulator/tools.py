@@ -65,14 +65,15 @@ def query_knowledge_base(question: str, chroma_db_dir: str, threshold: float = 0
         )
         query_embedding = emb_response.data[0].embedding
         
-        # 2. ChromaDB 쿼리 (필터 없이 전체 검색 후 파이썬에서 db_product 소스 필터링)
-        # N_results를 5개 정도로 넉넉히 가져와서 db_product가 걸러진 후 최종 3개가 되도록 처리
+        # 2. ChromaDB 쿼리 (where 조건을 활용하여 db_product 제외 필터를 네이티브 적용)
+        # 처음부터 db_product가 아닌 문서 중에서 최적의 3개 검색
         results = collection.query(
             query_embeddings=[query_embedding],
-            n_results=5
+            n_results=3,
+            where={"source": {"$ne": "db_product"}}
         )
         
-        # 3. 문자열 포맷팅 및 임계값 필터링 (db_product 소스 제외)
+        # 3. 문자열 포맷팅 및 임계값 필터링
         knowledge_parts = []
         collected_count = 0
         if results and results["documents"] and results["documents"][0]:
@@ -81,14 +82,8 @@ def query_knowledge_base(question: str, chroma_db_dir: str, threshold: float = 0
                 results["metadatas"][0], 
                 results["distances"][0]
             ):
-                if collected_count >= 3:
-                    break
-                # db_product (실시간 DB 대체된 벡터 소스) 제외
-                source = meta.get("source", "알 수 없음")
-                if source == "db_product":
-                    continue
-                    
                 if dist <= threshold:
+                    source = meta.get("source", "알 수 없음")
                     page = meta.get("page", "?")
                     collected_count += 1
                     knowledge_parts.append(f"[{collected_count}] 출처: {source} (Page {page}) (유사 거리: {dist:.4f})\n내용: {doc.strip()}")

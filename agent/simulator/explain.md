@@ -32,7 +32,7 @@ LangGraph 기반의 상태 기반 아키텍처(State Graph)로 설계되어 있�
 ```mermaid
 flowchart TD
     Start([시작: PB 질문 입력]) --> Node1["load_context<br>(고객 프로필 및 대화이력 로드)"]
-    Node1 --> Node2["route_intent<br>(의도 판별: gpt-4o-mini)"]
+    Node1 --> Node2["route_intent<br>(의도 판별: gpt-4o-mini / 이력 반영)"]
     Node2 --> Edge1{"의도 분류"}
     
     Edge1 -- "general<br>(일반 대화/화법)" --> Node4["generate_answer<br>(최종 피칭 조언 생성)"]
@@ -40,7 +40,8 @@ flowchart TD
     
     subgraph knowledge_node [knowledge 노드 내부 동작]
         direction TB
-        K1["ChromaDB RAG 검색<br>(세법 및 하우스뷰 PDF)"] --> K2{"임계값 만족?<br>(L2 거리 < 0.6)"}
+        QR["Query Reformulation<br>(이력 기반 쿼리 재구성)"] --> K1["ChromaDB RAG 검색<br>(세법 및 하우스뷰 PDF / where 필터 적용)"]
+        K1 --> K2{"임계값 만족?<br>(L2 거리 <= 0.85)"}
         K2 -- No / Error --> K3["Tavily Web Search<br>(실시간 웹 검색 Fallback)"]
         K2 -- Yes --> K4["RAG 컨텍스트 병합"]
         K3 --> K4
@@ -68,14 +69,15 @@ flowchart TD
     *   지정된 `customer_id`에 해당하는 로컬 프로필 파일(예: [customer_1001.md](./data/customer_1001.md))을 탐색하여 고객 자산 현황 및 분석 인사이트를 로드합니다.
     *   동시에 해당 고객의 과거 대화 이력(예: [customer_1001_history.json](./data/customer_1001_history.json))을 가져와 최대 10턴 이내로 제한해 `history`에 저장합니다.
 2.  **`route_intent`** (의도 라우팅)
-    *   `gpt-4o-mini` 모델의 구조화된 출력(Structured Output) 기능을 활용하여 PB 질문의 의도를 분석합니다.
+    *   `gpt-4o-mini` 모델의 구조화된 출력(Structured Output) 기능을 활용하여 PB 질문의 의도를 분석합니다. 대명사 및 지시어 등의 문맥을 파악하기 위해 최근 5턴의 `history`를 프롬프트에 연동하여 판단합니다.
     *   의도는 전문 지식/DB 조회가 필요한 `knowledge`와 단순 일반 상담/화법인 `general` 2가지 범주로 분류됩니다. (분류 프롬프트 명세: [intent_router_system_prompt.md](./prompt/intent_router_system_prompt.md))
 3.  **`route_conditional_edge`** (조건부 라우터 엣지)
     *   의도가 `general`인 경우, `knowledge` 노드를 완전히 우회(Skip)하여 즉시 `generate_answer` 노드로 진입합니다.
     *   의도가 `knowledge`인 경우, `knowledge` 노드로 분기합니다.
 4.  **`knowledge`** (통합 지식 융합 노드)
     *   의도가 `knowledge`인 경우에 실행되며, 다음 3가지 소스를 동시에 조회하여 하나의 거대한 컨텍스트로 융합합니다:
-        *   **VectorDB RAG**: `2026년 개정세법 해설.pdf` 및 `1. 2026년 6월 House View.pdf` 등 모든 문서를 포함한 ChromaDB에서 전체 범위 검색을 수행합니다. L2 거리 임계값 `0.6` 미만인 지식 청크만 선별하며, 만족하는 지식이 없거나 오류가 발생할 경우 Tavily API 실시간 웹 검색을 Fallback으로 활용합니다.
+        *   **검색 쿼리 재구성(Query Reformulation)**: RAG 검색 전에 최근 대화 이력을 바탕으로 현재 질문의 생략된 주어나 대명사("그거", "그 상품" 등)를 구체적인 명사로 재생성하여 RAG 및 Tavily 검색에 활용합니다.
+        *   **VectorDB RAG**: ChromaDB에서 검색을 수행합니다. L2 거리 임계값 `0.85` 이하인 지식 청크만 선별하며, 만족하는 지식이 없거나 오류가 발생할 경우 Tavily API 실시간 웹 검색을 Fallback으로 활용합니다. 쿼리 시 `where={"source": {"$ne": "db_product"}}` 필터를 네이티브 적용해 레거시 상품 데이터를 사전 배제합니다.
         *   **MySQL 상품 정보**: MySQL DB에서 각각의 전용 연동 도구를 통해 고객 보유 상품 리스트, 전체 상품 스펙, AI 적합도 점수 및 추천 사유를 병합 추출합니다. ([tools.py](./tools.py) 내 `get_customer_held_products`, `get_all_products`, `get_customer_product_matching` 호출)
         *   **MySQL 고객 1개월 특징**: `customer_information` 테이블에서 최근 1개월 이내 기록된 고객 행동 및 특이사항 메모를 수집합니다.
     *   수집된 DB 정보와 RAG 정보를 가공하여 `retrieved_knowledge`와 `recent_features_1m` 상태를 업데이트합니다.
@@ -114,10 +116,11 @@ sequenceDiagram
     BE->>Agent: subprocess 실행 (simulator.py {id} "{question}")
     
     Agent->>Agent: load_context (프로필 & 히스토리 읽기)
-    Agent->>Agent: route_intent (의도 판별: knowledge)
+    Agent->>Agent: route_intent (의도 판별: 최근 5턴 이력 활용)
+    Agent->>Agent: reformulate_query (대화 이력 기반 검색어 재구성)
     
     par DB 조회 및 RAG 검색 병렬 처리
-        Agent->>Vector: query_knowledge_base (ChromaDB 쿼리)
+        Agent->>Vector: query_knowledge_base (ChromaDB 쿼리 with where 필터)
         Vector-->>Agent: 텍스트 청크 반환 (유사도 검증)
         alt 유사도 임계값(0.6) 미달 시 Web Fallback
             Agent->>Web: fetch_from_tavily (실시간 정보 검색)
@@ -151,7 +154,7 @@ sequenceDiagram
 ## 3. 주요 기능 및 특징 (Key Features)
 
 ### 3.1 통합 지식 노드(knowledge)의 데이터 조회 범위
-*   **VectorDB RAG**: 특정 의도 메타데이터 필터에 묶이지 않고 세법 자료(`2026년 개정세법 해설.pdf`)와 하우스 뷰 리포트 전체를 검색 범위에 포함하여 수집합니다. (L2 거리 `0.6` 미만 기준 준수)
+*   **VectorDB RAG**: 특정 의도 메타데이터 필터에 묶이지 않고 세법 자료(`2026년 개정세법 해설.pdf`)와 하우스 뷰 리포트 전체를 검색 범위에 포함하여 수집합니다. ChromaDB 쿼리 시 `where={"source": {"$ne": "db_product"}}` 필터를 적용하여 유효한 PDF 문서 데이터만 검색하며, L2 거리 `0.85` 이하 기준을 준수합니다.
 *   **MySQL 상품 정보**: 실시간 DB에서 상품 상세 및 고객 매칭 정보를 직접 조회하여 RAG 결과와 통합 병합합니다.
 *   **MySQL 고객 특징**: 최근 1개월 특징 리스트를 조회하여 함께 컨텍스트에 로드합니다.
 

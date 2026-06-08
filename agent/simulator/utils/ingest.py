@@ -4,7 +4,7 @@ import glob
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv, find_dotenv
-import pypdf
+import pdfplumber
 import chromadb
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -24,6 +24,38 @@ def get_openai_client() -> OpenAI:
         raise ValueError("Environment variable OPENAI_API_KEY is not defined. Please check your .env file.")
     return OpenAI(api_key=api_key)
 
+
+
+def format_table_as_markdown(table) -> str:
+    """
+    Format a 2D table array extracted by pdfplumber into a Markdown table string.
+    """
+    if not table or not any(table):
+        return ""
+        
+    markdown_lines = []
+    
+    # Process header
+    header = [str(cell).strip().replace("\n", " ") if cell is not None else "" for cell in table[0]]
+    # Handle completely empty header cases
+    if not any(header):
+        header = [f"Col {i}" for i in range(1, len(table[0]) + 1)]
+    markdown_lines.append("| " + " | ".join(header) + " |")
+    
+    # Separator
+    separators = ["---" for _ in header]
+    markdown_lines.append("| " + " | ".join(separators) + " |")
+    
+    # Rows
+    for row in table[1:]:
+        if not any(row):
+            continue
+        row_str = [str(cell).strip().replace("\n", " ") if cell is not None else "" for cell in row]
+        if len(row_str) < len(header):
+            row_str += [""] * (len(header) - len(row_str))
+        markdown_lines.append("| " + " | ".join(row_str[:len(header)]) + " |")
+        
+    return "\n".join(markdown_lines)
 
 
 def process_pdfs_to_chroma():
@@ -78,29 +110,63 @@ def process_pdfs_to_chroma():
         print(f"\n파일 처리 중: {filename}")
         
         try:
-            reader = pypdf.PdfReader(pdf_path)
-            total_pages = len(reader.pages)
-            print(f"총 페이지 수: {total_pages}장")
-            
-            for page_idx, page in enumerate(reader.pages, 1):
-                text = page.extract_text()
-                if not text or len(text.strip()) < 10:
-                    # 텍스트가 거의 없거나 추출되지 않은 경우 (스캔된 이미지 가능성)
-                    continue
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+                print(f"총 페이지 수: {total_pages}장")
                 
-                # 텍스트 분할 실행
-                chunks = text_splitter.split_text(text)
-                for chunk_idx, chunk_content in enumerate(chunks):
-                    chunk_id = f"{filename}_p{page_idx}_c{chunk_idx}"
-                    all_chunks.append({
-                        "id": chunk_id,
-                        "document": chunk_content,
-                        "metadata": {
-                            "source": filename,
-                            "page": page_idx
-                        }
-                    })
+                for page_idx, page in enumerate(pdf.pages, 1):
+                    # 1. 감지된 표 영역(bbox) 확보
+                    tables = page.find_tables()
+                    table_bboxes = [t.bbox for t in tables]
                     
+                    # 2. 표 영역 외부의 텍스트만 추출 (중복 방지)
+                    if table_bboxes:
+                        def is_outside_tables(obj):
+                            if "x0" not in obj or "top" not in obj or "x1" not in obj or "bottom" not in obj:
+                                return True
+                            x0, top, x1, bottom = obj["x0"], obj["top"], obj["x1"], obj["bottom"]
+                            for t_x0, t_top, t_x1, t_bottom in table_bboxes:
+                                if not (x1 <= t_x0 or x0 >= t_x1 or bottom <= t_top or top >= t_bottom):
+                                    return False
+                            return True
+                        non_table_page = page.filter(is_outside_tables)
+                        non_table_text = non_table_page.extract_text()
+                    else:
+                        non_table_text = page.extract_text()
+                    
+                    # 3. 표 데이터 추출 및 마크다운 변환
+                    markdown_tables = []
+                    if tables:
+                        extracted_tables = page.extract_tables()
+                        for raw_table in extracted_tables:
+                            md_table = format_table_as_markdown(raw_table)
+                            if md_table:
+                                markdown_tables.append(md_table)
+                                
+                    # 4. 결합 및 정제
+                    content_parts = []
+                    if non_table_text and len(non_table_text.strip()) >= 10:
+                        content_parts.append(non_table_text.strip())
+                    if markdown_tables:
+                        content_parts.append("\n\n" + "\n\n".join(markdown_tables))
+                        
+                    page_content = "\n\n".join(content_parts).strip()
+                    if len(page_content) < 10:
+                        continue
+                    
+                    # 5. 텍스트 분할 실행
+                    chunks = text_splitter.split_text(page_content)
+                    for chunk_idx, chunk_content in enumerate(chunks):
+                        chunk_id = f"{filename}_p{page_idx}_c{chunk_idx}"
+                        all_chunks.append({
+                            "id": chunk_id,
+                            "document": chunk_content,
+                            "metadata": {
+                                "source": filename,
+                                "page": page_idx
+                            }
+                        })
+                        
             print(f"-> {filename} 파싱 완료 (누적 청크 수: {len(all_chunks)})")
             
         except Exception as e:

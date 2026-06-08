@@ -152,27 +152,88 @@ def route_intent_node(state: SimulatorState) -> Dict[str, Any]:
         return {}
         
     question = state["question"]
+    history = state.get("history", [])
     api_key = os.getenv("OPENAI_API_KEY")
     
+    # Format recent history for router context
+    history_str = ""
+    if history:
+        history_lines = []
+        for turn in history[-5:]:
+            role_label = "PB" if turn["role"] == "user" else "AI"
+            content = turn["content"]
+            history_lines.append(f"- {role_label}: {content}")
+        history_str = "\n".join(history_lines)
+        
     try:
         llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=api_key)
         structured_llm = llm.with_structured_output(IntentRoute)
         
         system_prompt = get_intent_router_system_prompt()
         
+        user_content = f"PB 질문: {question}"
+        if history_str:
+            user_content = f"[이전 대화 이력]\n{history_str}\n\nPB 질문: {question}"
+            
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
-            ("user", "PB 질문: {question}")
+            ("user", "{user_content}")
         ])
         
         chain = prompt | structured_llm
-        result: IntentRoute = chain.invoke({"question": question})
+        result: IntentRoute = chain.invoke({"user_content": user_content})
         
         sys.stderr.write(f"[Router] 대화 의도 판별 완료: '{result.intent}' (사유: {result.reason})\n")
         return {"intent": result.intent.lower()}
     except Exception as e:
         sys.stderr.write(f"[Router 오류] 의도 분류 실패: {str(e)}. 'general'로 대체합니다.\n")
         return {"intent": "general"}
+
+
+def reformulate_query(question: str, history: List[Dict[str, str]], api_key: str) -> str:
+    """
+    Reformulate the user's question into a standalone search query using the conversation history.
+    """
+    if not history:
+        return question
+        
+    try:
+        llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.1, api_key=api_key)
+        
+        # Format history into a simple transcript
+        history_lines = []
+        for turn in history[-5:]:
+            role_label = "PB" if turn["role"] == "user" else "AI"
+            content = turn["content"]
+            history_lines.append(f"{role_label}: {content}")
+        history_str = "\n".join(history_lines)
+        
+        system_prompt = (
+            "당신은 검색 쿼리 변환기입니다. [대화 이력]과 [현재 질문]이 주어지면, "
+            "이전 대화 맥락을 파악하여 현재 질문 속의 대명사(그, 해당, 그때 등)나 생략된 주어/목적어를 "
+            "원래의 명사로 구체화한 하나의 '검색용 단일 쿼리'를 한국어로 생성하십시오.\n"
+            "추가 설명이나 인사 없이 오직 정제된 검색 쿼리만 출력하십시오."
+        )
+        
+        user_content = (
+            f"[대화 이력]\n{history_str}\n\n"
+            f"[현재 질문]\n{question}\n\n"
+            f"변환된 검색 쿼리:"
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", "{user_content}")
+        ])
+        
+        chain = prompt | llm
+        response = chain.invoke({"user_content": user_content})
+        reformulated = response.content.strip()
+        sys.stderr.write(f"[Query Reformulation] 원본: '{question}' -> 정제: '{reformulated}'\n")
+        return reformulated if reformulated else question
+    except Exception as e:
+        sys.stderr.write(f"[Query Reformulation 오류] 쿼리 변환 실패: {str(e)}. 원본 질문을 사용합니다.\n")
+        return question
 
 
 def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
@@ -185,28 +246,34 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
         return {}
         
     question = state["question"]
+    history = state.get("history", [])
     customer_id = state["customer_id"]
     chroma_db_dir = os.path.join(current_dir, "data", "chroma_db")
-    THRESHOLD = 1.2
+    THRESHOLD = 1.25
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    
+    # 1. Reformulate question using history to handle pronouns and missing contexts
+    search_query = reformulate_query(question, history, api_key)
     
     retrieved_knowledge_parts = []
     
-    # 1. Retrieve VectorDB RAG (threshold 0.6 filter, fallback to Tavily)
+    # 2. Retrieve VectorDB RAG (threshold 0.85 filter, fallback to Tavily)
     try:
-        rag_knowledge = query_knowledge_base(question, chroma_db_dir, THRESHOLD)
+        rag_knowledge = query_knowledge_base(search_query, chroma_db_dir, THRESHOLD)
         if rag_knowledge:
             retrieved_knowledge_parts.append(rag_knowledge)
         else:
-            sys.stderr.write(f"[RAG->Tavily] 유사도 기준(0.6) 만족 지식 부재로 Tavily 실시간 웹 검색 수행\n")
-            web_search = fetch_from_tavily(question)
+            sys.stderr.write(f"[RAG->Tavily] 유사도 기준({THRESHOLD}) 만족 지식 부재로 Tavily 실시간 웹 검색 수행 (쿼리: '{search_query}')\n")
+            web_search = fetch_from_tavily(search_query)
             retrieved_knowledge_parts.append(web_search)
     except Exception as e:
         sys.stderr.write(f"[RAG 오류] 지식 검색 중 에러 발생: {str(e)}\n")
         sys.stderr.write(f"[RAG->Tavily] 에러 발생으로 인해 Tavily 실시간 웹 검색 수행\n")
-        web_search = fetch_from_tavily(question)
+        web_search = fetch_from_tavily(search_query)
         retrieved_knowledge_parts.append(web_search)
         
-    # 2. Retrieve MySQL Financial Products & matching information (using split tools)
+    # 3. Retrieve MySQL Financial Products & matching information (using split tools)
     try:
         held_products = get_customer_held_products(customer_id)
         all_products = get_all_products()
@@ -221,7 +288,7 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
     # Combine knowledge parts
     combined_knowledge = "\n\n".join(retrieved_knowledge_parts)
     
-    # 3. Retrieve customer's features in the last 1 month from MySQL customer_information table
+    # 4. Retrieve customer's features in the last 1 month from MySQL customer_information table
     recent_features_str = ""
     try:
         from agent.customer.tools import get_customer_features
