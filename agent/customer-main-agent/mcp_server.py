@@ -144,5 +144,12 @@ def fetch_batch_target_c_ids() -> str:
     """
     return to_mcp_response(tools_direct.fetch_batch_target_c_ids())
 
+@mcp.tool()
+def get_customer_ids_by_pb(u_id: str) -> str:
+    """
+    Retrieve list of customer IDs assigned to a specific PB (u_id) from the in_charge table.
+    """
+    return to_mcp_response(tools_direct.get_customer_ids_by_pb(u_id))
+
 if __name__ == "__main__":
     mcp.run()

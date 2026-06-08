@@ -174,3 +174,6 @@ def get_customer_transactions(customer_id: int, months: int = 3):
 @traceable(name="fetch_batch_target_c_ids", run_type="tool")
 def fetch_batch_target_c_ids() -> list:
     return _mcp_manager.call_tool("fetch_batch_target_c_ids", {})
+
+def get_customer_ids_by_pb(u_id: str) -> list:
+    return _mcp_manager.call_tool("get_customer_ids_by_pb", {"u_id": u_id})

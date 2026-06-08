@@ -20,9 +20,14 @@ logging.basicConfig(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="POOM-AI Batch Customer Analysis Runner")
     parser.add_argument(
-        "--c_ids", 
+        "--c_id", 
         type=str, 
         help="수동 분석을 수행할 특정 고객 ID 목록 (예: 1001,1002)"
+    )
+    parser.add_argument(
+        "--u_id",
+        type=str,
+        help="특정 담당 PB의 관리 고객들만 분석하도록 제한하는 PB 사용자 ID (예: pb01)"
     )
     parser.add_argument(
         "--sub1",
@@ -42,22 +47,22 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # CLI 인코딩 방어 처리
-    if sys.platform.startswith('win'):
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stdin.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
+    # CLI 인코딩 방어 및 출력 버퍼링 비활성화 (실시간 로그 출력 보장)
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', write_through=True)
+        sys.stdin.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
 
     specified_ids = None
-    if args.c_ids:
-        specified_ids = [int(i.strip()) for i in args.c_ids.split(",") if i.strip()]
+    if args.c_id:
+        specified_ids = [int(i.strip()) for i in args.c_id.split(",") if i.strip()]
 
     # Main Agent 초기화 및 배치 실행 (오케스트레이션 수행)
     main_agent = MainAgent()
     main_agent.run_batch(
-        specified_ids, 
+        specified_c_ids=specified_ids, 
+        u_id=args.u_id,
         force_sub1=args.sub1, 
         force_sub2=args.sub2, 
         force_sub3=args.sub3
