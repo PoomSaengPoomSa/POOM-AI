@@ -16,8 +16,9 @@ if os.path.exists(POOM_BACK_DIR):
     try:
         import app
         back_app_path = os.path.join(POOM_BACK_DIR, "app")
-        if os.path.exists(back_app_path) and back_app_path not in app.__path__:
-            app.__path__.append(back_app_path)
+        ai_app_path = os.path.dirname(os.path.abspath(__file__))
+        if os.path.exists(back_app_path):
+            app.__path__ = [ai_app_path, back_app_path]
     except Exception as e:
         print(f"[Warning] app 패키지 경로 병합 실패: {e}")
 
