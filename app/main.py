@@ -10,8 +10,16 @@ if POOM_AI_DIR not in sys.path:
 
 # AI 모듈이 백엔드의 DB 모델 및 app 모듈을 참조하기 위한 임포트 경로 매핑
 POOM_BACK_DIR = "/POOM-BACK"
-if os.path.exists(POOM_BACK_DIR) and POOM_BACK_DIR not in sys.path:
-    sys.path.insert(0, POOM_BACK_DIR)
+if os.path.exists(POOM_BACK_DIR):
+    if POOM_BACK_DIR not in sys.path:
+        sys.path.insert(0, POOM_BACK_DIR)
+    try:
+        import app
+        back_app_path = os.path.join(POOM_BACK_DIR, "app")
+        if os.path.exists(back_app_path) and back_app_path not in app.__path__:
+            app.__path__.append(back_app_path)
+    except Exception as e:
+        print(f"[Warning] app 패키지 경로 병합 실패: {e}")
 
 app = FastAPI(title="POOM AI Agent Server")
 
