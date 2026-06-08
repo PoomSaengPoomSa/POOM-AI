@@ -129,12 +129,19 @@ def preprocess():
     raw_features = [
         "house_price_idx", "kr_cpi", "kr_unemployment",
         "kr_base_rate", "kr_mortgage_rate", "kospi200",
-        "apt_trade_count", "kr_m2", "buyer_dominance"
+        "apt_trade_count", "kr_m2", "buyer_dominance",
+        "us_fed_rate", "vix", "wti_oil", "kr_usd_exchange"
     ]
-    df[raw_features] = df[raw_features].ffill().bfill()
+    # buyer_dominance: 선형 보간 (시계열 특성 반영)
+    df['buyer_dominance'] = df['buyer_dominance'].interpolate(method='linear')
+    df['buyer_dominance'] = df['buyer_dominance'].bfill()
+    # 나머지: ffill/bfill
+    other_features = [f for f in raw_features if f != 'buyer_dominance']
+    df[other_features] = df[other_features].ffill().bfill()
 
     # 파생 변수 엔지니어링 (변수 특성에 맞게 pct_change / diff 구분)
-    rate_cols = ["house_price_idx", "kr_cpi", "kospi200", "apt_trade_count", "kr_m2"]
+    rate_cols = ["house_price_idx", "kr_cpi", "kospi200", "apt_trade_count", "kr_m2",
+                 "us_fed_rate", "vix", "wti_oil", "kr_usd_exchange"]
     diff_cols  = ["kr_unemployment", "kr_base_rate", "kr_mortgage_rate", "buyer_dominance"]
 
     stationary_cols = []
@@ -161,13 +168,29 @@ def preprocess():
             df[f"{col}_ma6"] = df[col].rolling(window=6).mean()
             rolling_features.extend([f"{col}_ma3", f"{col}_ma6"])
 
+    # YoY (Year-over-Year, 12개월 변화율)
+    yoy_cols = ["house_price_idx", "kr_cpi", "kospi200", "apt_trade_count", "kr_m2",
+                "us_fed_rate", "wti_oil", "kr_usd_exchange"]
+    yoy_features = []
+    for col in yoy_cols:
+        df[f"{col}_yoy"] = df[col].pct_change(periods=12) * 100
+        yoy_features.append(f"{col}_yoy")
+
+    # MoM 모멘텀 (3개월, 6개월 누적 변화)
+    mom_cols = ["house_price_idx", "kr_cpi", "kr_mortgage_rate", "buyer_dominance"]
+    mom_features = []
+    for col in mom_cols:
+        df[f"{col}_mom3"] = df[col].diff(3)
+        df[f"{col}_mom6"] = df[col].diff(6)
+        mom_features.extend([f"{col}_mom3", f"{col}_mom6"])
+
     # 계절성: sin/cos 인코딩
     month_series = pd.to_datetime(df['date_ym'], format='%Y%m').dt.month
     df['month_sin'] = np.sin(2 * np.pi * month_series / 12)
     df['month_cos'] = np.cos(2 * np.pi * month_series / 12)
     seasonality_features = ['month_sin', 'month_cos']
 
-    candidate_features = stationary_cols + lagged_features + rolling_features + seasonality_features
+    candidate_features = stationary_cols + lagged_features + rolling_features + yoy_features + mom_features + seasonality_features
 
     # candidate_features에 결측치(NaN)가 있는 앞부분 행들을 제거
     df = df.dropna(subset=candidate_features).reset_index(drop=True)
@@ -324,4 +347,3 @@ if __name__ == '__main__':
         print(f"  Columns: {list(result.columns)}")
     else:
         print("[Preprocess] 전처리 실패")
-
