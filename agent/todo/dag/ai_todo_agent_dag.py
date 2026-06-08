@@ -2,6 +2,7 @@ import pendulum
 from datetime import datetime, timedelta
 from airflow import DAG  # type: ignore
 from airflow.operators.bash import BashOperator  # type: ignore
+from airflow.models import Variable  # type: ignore
 
 # 1. 타임존 설정 (KST 한국 표준시)
 local_tz = pendulum.timezone("Asia/Seoul")
@@ -17,6 +18,9 @@ default_args = {
     "retries": 2,                           # 일시적 API/네트워크 에러 대비 2회 자동 재시도
     "retry_delay": timedelta(minutes=5),    # 재시도 전 5분 대기
 }
+
+# 3. 백엔드 URL 조회 (기본값: 도커 호스트 게이트웨이 주소)
+backend_url = Variable.get("POOM_BACKEND_URL", default_var="http://172.17.0.1:8000")
 
 # 2. DAG 정의
 with DAG(
@@ -39,11 +43,9 @@ with DAG(
     # 리눅스/Docker 서버의 절대 경로에 맞춰 파이썬 실행기 및 main.py 경로를 기정의합니다.
     run_ai_todo_agent = BashOperator(
         task_id="run_ai_todo_agent",
-        bash_command="""
-        python3 /opt/airflow/POOM-AI/agent/todo/main.py --u_id user1 --date {{ logical_date.in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}
+        bash_command=f"""
+        curl -X POST "{backend_url}/api/v1/ai-todo/run?u_id=pb_b1_1&date={{{{ logical_date.in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}}}"
         """,
-        # 윈도우 로컬 환경에서 테스트할 경우 아래의 윈도우 절대 경로로 치환하여 사용합니다:
-        # bash_command="c:\\ITStudy\\poom\\back\\.venv\\Scripts\\python.exe c:\\ITStudy\\poom\\ai\\agent\\todo\\main.py --u_id user1 --date {{ ds }}"
     )
 
     # [TASK 3] 에이전트 완료 후, PB 모바일/웹 알림 전송 API 트리거 (가상 시뮬레이션)

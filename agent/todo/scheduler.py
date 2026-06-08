@@ -51,9 +51,9 @@ def run_todo_agent_for_all_pbs(date_str: str = None):
 
     try:
         with get_db_session() as db:
-            # 재직 중인 PB 리스트 조회
-            pb_users = db.query(PbUser).filter(PbUser.status == "재직").all()
-            logger.info(f"[Scheduler] 분석 대상 재직 PB 총 {len(pb_users)}명 검출")
+            # 재직 중인 PB 리스트 조회 (토큰 절약을 위해 pb_b1_1 유저만 대상으로 하도록 변경)
+            pb_users = db.query(PbUser).filter(PbUser.status == "재직", PbUser.u_id == "pb_b1_1").all()
+            logger.info(f"[Scheduler] 분석 대상 재직 PB 총 {len(pb_users)}명 검출 (pb_b1_1 제한)")
 
             for pb in pb_users:
                 logger.info(f"🚀 [PB 가동] u_id: {pb.u_id} ({pb.name} {pb.position}) 추천 일정 생성 에이전트 구동")
