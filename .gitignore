@@ -27,6 +27,9 @@ wandb/
 .web_cache/
 lightning_logs/
 
+# Jupyter / Colab Notebooks (실험용, push 제외)
+*.ipynb
+
 # Databases
 *.db
 *.sqlite3

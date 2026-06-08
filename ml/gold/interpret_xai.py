@@ -190,7 +190,7 @@ def interpret_xai():
     # 3. Call API
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=messages,
             max_tokens=3000,
             temperature=0.3
@@ -283,7 +283,7 @@ def interpret_xai():
         
         print(f"[XAI] OpenAI GPT-4o 로 금값 요약 보고서 생성 요청 중...")
         response_sum = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=summary_messages,
             temperature=0.7
         )
