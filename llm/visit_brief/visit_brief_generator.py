@@ -93,6 +93,17 @@ def get_db():
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
+
+def load_prompt(filename: str) -> str:
+    """
+    Utility to load prompt templates from the prompt directory.
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "prompt", filename)
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
 def generate_briefing_via_llm(customer_info: dict) -> str:
     """
     OpenAI API를 활용하여 정교한 구조화 방문 예정 브리핑을 생성합니다.
@@ -116,53 +127,24 @@ def generate_briefing_via_llm(customer_info: dict) -> str:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
             
-            prompt = f"""당신은 우량 고객 자산관리 부문의 전문 수석 비서 AI입니다. 
-아래 제공되는 해당 고객의 실시간 정량 및 정성 정보를 바탕으로, 담당 PB가 미팅 전에 한눈에 숙지할 수 있도록 실용적이고 예리한 **'방문 예정 브리핑'**을 정교하게 생성하십시오.
-
-### [고객 실시간 데이터]
-- 고객명: {customer_info['name']} (성향: {customer_info['tendency']})
-- 담당 PB: {customer_info['pb_name']} 팀장
-- 기호 및 선호도: {customer_info['preferences']}
-- 자산 현황: 총 자산 {customer_info['total_assets']:,}원 (보통예금/예적금: {customer_info['deposit']:,}원, 투자상품: {customer_info['investment']:,}원, 퇴직연금: {customer_info['pension']:,}원, 대출: {customer_info['loan']:,}원)
-- 가입 중인 상품 및 만기: {customer_info['products']}
-- 이탈 등급: {customer_info['churn_grade']} (사유: {customer_info['churn_reason']})
-- 최근 거래 내역: {customer_info['transactions']}
-- 이전 상담 이력: {customer_info['consultations']}
-
-### [작성 규칙]
-1. 반드시 아래의 **[구조화 마커 포맷]**을 정확하게 지켜 출력하십시오. 마커 괄호명(`[...]`)을 그대로 유지해 주셔야 프론트엔드가 올바르게 인식합니다.
-2. **[Quick Summary]**: 금리 추이, 만기 여부, 이탈 위험 사유, 최근 거래 내역 및 이전 상담 요약을 종합 분석하여, 이 고객만을 위한 독창적이고 날카로운 당일 미팅의 최우선 전략 목표 2가지를 요약문 형태로 작성하십시오.
-   * **주의**: 모든 고객에게 똑같이 복사-붙여넣기한 느낌의 상투적인 템플릿(예: "금리 민감도가 높은 VIP 고객입니다.", "타행 이탈 방지가 최우선입니다." 등)은 절대 사용하지 마십시오. 각 고객의 실제 총 자산액, 성향, 구체적인 최근 거래 내역이나 만기 도래 상품을 명확히 대입하여 고도로 개별화된 보고서 느낌을 주십시오.
-3. **[고객 정보 & Preference]**: 단순 텍스트 나열을 피하고, PB가 한눈에 볼 수 있도록 분류하십시오. 항목 앞에 적절한 이모지(☕, ❌, 📰 등)를 사용하고, 선호 음료(웰컴 드링크)와 대기 시 편의 기호, 기피 사항(★절대 기피해야 할 물품/음료) 등을 핵심 키워드 중심으로 가독성 있게 정리하십시오.
-4. **[자산 현황 & 최근 거래 내역]**: 총 자산과 세부 자산 비율을 깔끔히 구조화하고, 보유 상품 상세 명칭과 만기를 일목요연하게 정리하십시오. 최근 거래 내역은 거액 거래나 이탈 징후가 보이면 강조 표시(⚠️)를 앞에 붙여 주십시오.
-5. **[핵심 특이사항]**: 이탈 위험도 등급과 그 구체적인 이유, 오늘 상담 시 반드시 체크하고 피해야 할 의사소통 스타일을 기재하십시오. 그리고 가장 하단에 이전 상담 이력을 날짜와 함께 다음의 엄격한 포맷으로 추가하십시오:
-   * `- 이전 상담 히스토리 요약:` (이 문구를 반드시 먼저 적으십시오)
-   * `{history_text}` (여기에 제시된 이전 상담 히스토리 줄들을 가공하지 말고 있는 그대로 출력하십시오)
-   * **주의**: 상담 내용이 아무리 길어도 절대 중간에 줄바꿈하지 말고 한 줄로 이어서 작성해야 합니다. `| AI 요약:` 문구 앞뒤에 공백을 넣어야 합니다.
-
-### [구조화 마커 포맷]
-[Quick Summary]
-(요약 내용 작성)
-
-[고객 정보 & Preference]
-- 고객명/등급: {customer_info['name']} 고객 ({customer_info['tendency']} 성향)
-- 담당 PB: {customer_info['pb_name']} 팀장
-- 음료/편의 선호도 (★필독):
-(구조화된 선호도 내용 불릿 포인트로 작성)
-
-[자산 현황 & 최근 거래 내역]
-- 총 자산: {customer_info['total_assets']:,} 원
-- 보유 상품 상세:
-(보유 상품 명칭 및 만기 현황 상세 작성)
-- 최근 거래 내역:
-(최근 5건의 거래 내역 작성)
-
-[핵심 특이사항]
-- 이탈 위험도: {customer_info['churn_grade']} ({customer_info['churn_reason']})
-(기타 우대금리 민감 성향, 필수 체크 사안 작성)
-- 이전 상담 히스토리 요약:
-{history_text}
-"""
+            prompt_template = load_prompt("visit_brief_prompt.md")
+            prompt = prompt_template.format(
+                name=customer_info['name'],
+                tendency=customer_info['tendency'],
+                pb_name=customer_info['pb_name'],
+                preferences=customer_info['preferences'],
+                total_assets=f"{customer_info['total_assets']:,}",
+                deposit=f"{customer_info['deposit']:,}",
+                investment=f"{customer_info['investment']:,}",
+                pension=f"{customer_info['pension']:,}",
+                loan=f"{customer_info['loan']:,}",
+                products=customer_info['products'],
+                churn_grade=customer_info['churn_grade'],
+                churn_reason=customer_info['churn_reason'],
+                transactions=customer_info['transactions'],
+                consultations=customer_info['consultations'],
+                history_text=history_text
+            )
             completion = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
