@@ -27,6 +27,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--u_id",
         type=str,
+        default="pb_b1_1",
         help="특정 담당 PB의 관리 고객들만 분석하도록 제한하는 PB 사용자 ID (예: pb01)"
     )
     parser.add_argument(
