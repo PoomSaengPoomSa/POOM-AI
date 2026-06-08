@@ -172,7 +172,7 @@ def run_interpret(valid_mode=False):
             model="gpt-4o-mini",
             messages=messages,
             max_tokens=3000,
-            temperature=0.3
+            #temperature=0.3
         )
         result_text = response.choices[0].message.content.strip()
         if result_text.startswith("```"):

@@ -4,7 +4,7 @@ import glob
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv, find_dotenv
-import pypdf
+import pdfplumber
 import chromadb
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -26,7 +26,73 @@ def get_openai_client() -> OpenAI:
 
 
 
+def format_table_as_markdown(table) -> str:
+    """
+    Format a 2D table array extracted by pdfplumber into a Markdown table string.
+    """
+    if not table or not any(table):
+        return ""
+        
+    markdown_lines = []
+    
+    # Process header
+    header = [str(cell).strip().replace("\n", " ") if cell is not None else "" for cell in table[0]]
+    # Handle completely empty header cases
+    if not any(header):
+        header = [f"Col {i}" for i in range(1, len(table[0]) + 1)]
+    markdown_lines.append("| " + " | ".join(header) + " |")
+    
+    # Separator
+    separators = ["---" for _ in header]
+    markdown_lines.append("| " + " | ".join(separators) + " |")
+    
+    # Rows
+    for row in table[1:]:
+        if not any(row):
+            continue
+        row_str = [str(cell).strip().replace("\n", " ") if cell is not None else "" for cell in row]
+        if len(row_str) < len(header):
+            row_str += [""] * (len(header) - len(row_str))
+        markdown_lines.append("| " + " | ".join(row_str[:len(header)]) + " |")
+        
+    return "\n".join(markdown_lines)
+
+
 def process_pdfs_to_chroma():
+    # Base metadata tagging taxonomy for the raw files
+    BASE_TAGS = {
+        "1. 2026년 6월 House View.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2025 우리금융 트렌드 보고서1.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2025 한국 부자 보고서.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2026 대한민국 웰스 리포트_하나금융연구소.pdf": {
+            "asset_category": "매크로",
+            "data_lifecycle": "주기적 변경",
+            "target_segment": "공통"
+        },
+        "2026년 개정세법 해설.pdf": {
+            "asset_category": "세무",
+            "data_lifecycle": "영속 가이드",
+            "target_segment": "공통"
+        },
+        "230919_금융소비자보호법 설명자료_f.pdf": {
+            "asset_category": "컴플라이언스",
+            "data_lifecycle": "영속 가이드",
+            "target_segment": "공통"
+        }
+    }
+
     # Base paths relative to the simulator directory (parent of utils)
     simulator_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     raw_data_dir = os.path.join(simulator_dir, "data", "raw_data")
@@ -46,8 +112,8 @@ def process_pdfs_to_chroma():
         print("기존 ChromaDB 콜렉션 'poom_knowledge' 삭제 완료.")
     except Exception:
         pass
-    collection = chroma_client.create_collection(name="poom_knowledge")
-    print("ChromaDB 콜렉션 'poom_knowledge' 신규 생성 완료.")
+    collection = chroma_client.create_collection(name="poom_knowledge", metadata={"hnsw:space": "cosine"})
+    print("ChromaDB 콜렉션 'poom_knowledge' 신규 생성 완료 (코사인 유사도 설정).")
 
     # PDF 파일 목록 탐색 및 텍스트 추출 불가 이미지 스캔본 필터링
     pdf_pattern = os.path.join(raw_data_dir, "*.pdf")
@@ -78,29 +144,88 @@ def process_pdfs_to_chroma():
         print(f"\n파일 처리 중: {filename}")
         
         try:
-            reader = pypdf.PdfReader(pdf_path)
-            total_pages = len(reader.pages)
-            print(f"총 페이지 수: {total_pages}장")
-            
-            for page_idx, page in enumerate(reader.pages, 1):
-                text = page.extract_text()
-                if not text or len(text.strip()) < 10:
-                    # 텍스트가 거의 없거나 추출되지 않은 경우 (스캔된 이미지 가능성)
-                    continue
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+                print(f"총 페이지 수: {total_pages}장")
                 
-                # 텍스트 분할 실행
-                chunks = text_splitter.split_text(text)
-                for chunk_idx, chunk_content in enumerate(chunks):
-                    chunk_id = f"{filename}_p{page_idx}_c{chunk_idx}"
-                    all_chunks.append({
-                        "id": chunk_id,
-                        "document": chunk_content,
-                        "metadata": {
-                            "source": filename,
-                            "page": page_idx
-                        }
+                for page_idx, page in enumerate(pdf.pages, 1):
+                    # 1. 감지된 표 영역(bbox) 확보
+                    tables = page.find_tables()
+                    table_bboxes = [t.bbox for t in tables]
+                    
+                    # 2. 표 영역 외부의 텍스트만 추출 (중복 방지)
+                    if table_bboxes:
+                        def is_outside_tables(obj):
+                            if "x0" not in obj or "top" not in obj or "x1" not in obj or "bottom" not in obj:
+                                return True
+                            x0, top, x1, bottom = obj["x0"], obj["top"], obj["x1"], obj["bottom"]
+                            for t_x0, t_top, t_x1, t_bottom in table_bboxes:
+                                if not (x1 <= t_x0 or x0 >= t_x1 or bottom <= t_top or top >= t_bottom):
+                                    return False
+                            return True
+                        non_table_page = page.filter(is_outside_tables)
+                        non_table_text = non_table_page.extract_text()
+                    else:
+                        non_table_text = page.extract_text()
+                    
+                    # 3. 표 데이터 추출 및 마크다운 변환
+                    markdown_tables = []
+                    if tables:
+                        extracted_tables = page.extract_tables()
+                        for raw_table in extracted_tables:
+                            md_table = format_table_as_markdown(raw_table)
+                            if md_table:
+                                markdown_tables.append(md_table)
+                                
+                    # 4. 결합 및 정제
+                    content_parts = []
+                    if non_table_text and len(non_table_text.strip()) >= 10:
+                        content_parts.append(non_table_text.strip())
+                    if markdown_tables:
+                        content_parts.append("\n\n" + "\n\n".join(markdown_tables))
+                        
+                    page_content = "\n\n".join(content_parts).strip()
+                    if len(page_content) < 10:
+                        continue
+                    
+                    # 5. 텍스트 분할 실행
+                    chunks = text_splitter.split_text(page_content)
+                    
+                    base_tags = BASE_TAGS.get(filename, {
+                        "asset_category": "공통",
+                        "data_lifecycle": "영속 가이드",
+                        "target_segment": "공통"
                     })
                     
+                    for chunk_idx, chunk_content in enumerate(chunks):
+                        chunk_id = f"{filename}_p{page_idx}_c{chunk_idx}"
+                        
+                        # Dynamic target segment assignment based on content
+                        target_segment = base_tags.get("target_segment", "공통")
+                        lower_content = chunk_content.lower()
+                        
+                        if filename == "2026 대한민국 웰스 리포트_하나금융연구소.pdf":
+                            if "영리치" in lower_content or "young rich" in lower_content:
+                                target_segment = "영리치"
+                            elif "시니어" in lower_content or "고령" in lower_content or "올드리치" in lower_content:
+                                target_segment = "시니어"
+                        elif filename == "2026년 개정세법 해설.pdf":
+                            corp_keywords = ["가업상속", "가업승계", "법인세", "배당소득", "최대주주", "가업 상속", "가업 승계"]
+                            if any(kw in chunk_content for kw in corp_keywords):
+                                target_segment = "기업인"
+                                
+                        all_chunks.append({
+                            "id": chunk_id,
+                            "document": chunk_content,
+                            "metadata": {
+                                "source": filename,
+                                "page": page_idx,
+                                "asset_category": base_tags.get("asset_category", "공통"),
+                                "data_lifecycle": base_tags.get("data_lifecycle", "영속 가이드"),
+                                "target_segment": target_segment
+                            }
+                        })
+                        
             print(f"-> {filename} 파싱 완료 (누적 청크 수: {len(all_chunks)})")
             
         except Exception as e:
