@@ -124,7 +124,7 @@ def interpret_xai():
             print(f"[ERROR] Beeswarm CSV 요약 실패: {e}")
 
     # 2. OpenAI API 요청 메시지 구성
-    print(f"[XAI] OpenAI GPT-4o 로 XAI 분석 요청 중 (CSV 데이터만 사용)...")
+    print(f"[XAI] OpenAI GPT-4o-mini 로 XAI 분석 요청 중 (CSV 데이터만 사용)...")
     
     client = OpenAI(api_key=api_key)
 
@@ -159,7 +159,7 @@ def interpret_xai():
     # 3. API 호출
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=messages,
             max_tokens=3000, # 워터폴 분석까지 포함되므로 토큰 여유를 조금 더 줍니다.
             temperature=0.3
@@ -256,9 +256,9 @@ def interpret_xai():
             {"role": "user", "content": prompt}
         ]
         
-        print(f"[XAI] OpenAI GPT-4o 로 기준금리 요약 보고서 생성 요청 중...")
+        print(f"[XAI] OpenAI GPT-4o-mini 로 기준금리 요약 보고서 생성 요청 중...")
         response_sum = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=summary_messages,
             temperature=0.7
         )
