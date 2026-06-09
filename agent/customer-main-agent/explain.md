@@ -244,7 +244,7 @@ class Agent3State(TypedDict):
 
 #### 1) 수동/자동 분석 대상 선별 전략 및 흐름
 * **수동 분석 타겟 바이패스 (Bypass Path)**
-  - CLI 파라미터로 특정 고객 ID 목록(`--c_ids 1001,1002`)이 입력되는 경우, DB 자동 스캔과 AI Target Selector를 생략하고 입력된 고객 ID들을 즉시 대상자로 확정합니다.
+  - CLI 파라미터로 특정 고객 ID 목록(`--c_ids 1,2`)이 입력되는 경우, DB 자동 스캔과 AI Target Selector를 생략하고 입력된 고객 ID들을 즉시 대상자로 확정합니다.
 * **1단계: DB 자동 스캔 (`tools.fetch_batch_target_c_ids`)**
   - 분석이 필요한 후보 VVIP 고객군을 5대 SQL 조건에 의해 데이터베이스로부터 1차 추출합니다.
 * **2단계: AI Target Selector 정교한 대상 선별 (`batch_target_selector_system.md`)**

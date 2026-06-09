@@ -617,7 +617,7 @@ if __name__ == "__main__":
     default_date = datetime.now(kst_tz).strftime("%Y-%m-%d")
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--u_id", type=str, default="user1")
+    parser.add_argument("--u_id", type=str, default="pb_b1_1")
     parser.add_argument("--date", type=str, default=default_date)
     args = parser.parse_args()
     

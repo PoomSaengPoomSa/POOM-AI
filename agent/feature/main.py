@@ -14,8 +14,8 @@ parent_dir = os.path.dirname(os.path.dirname(current_dir)) # POOM-AI root
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from agent.customer.db import get_db_cursor
-from agent.customer.feature_agent import CustomerFeatureAgent
+from agent.feature.db import get_db_cursor
+from agent.feature.feature_agent import CustomerFeatureAgent
 
 def get_all_customer_ids():
     """
@@ -40,7 +40,7 @@ def main():
     parser.add_argument(
         "--c_id", 
         type=str, 
-        help="Comma-separated list of customer IDs (e.g., 1001,1002,1003). If omitted, runs for all customers."
+        help="Comma-separated list of customer IDs (e.g., 1,2,3). If omitted, runs for all customers."
     )
     parser.add_argument(
         "--model", 
