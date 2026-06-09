@@ -342,7 +342,7 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
     # 5. Retrieve customer's features in the last 1 month from MySQL
     recent_features_str = ""
     try:
-        from agent.customer.tools import get_customer_features
+        from agent.feature.tools import get_customer_features
         features = get_customer_features(customer_id, months=1)
         
         if not features:
@@ -552,7 +552,7 @@ class SimulatorAgent:
         
         final_state = self.app.invoke(
             initial_state,
-            config={"run_name": "SimulatorAgent", "tags": ["simulator_agent"]}
+            config={"run_name": "Simulator-Agent", "tags": ["simulator_agent"]}
         )
         
         if final_state.get("errors"):

@@ -22,7 +22,7 @@ def main():
         print("=" * 60)
         print("❌ 사용법 안내")
         print("  python agent/simulator/test_simulator.py <customer_id>")
-        print("  예시: python agent/simulator/test_simulator.py 1001")
+        print("  예시: python agent/simulator/test_simulator.py 1")
         print("=" * 60)
         sys.exit(1)
         

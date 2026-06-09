@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, END
 
 from . import tools
 
-# Absolute path resolution to strictly load .env from agent/customer/.env
+# Absolute path resolution to strictly load .env from agent/feature/.env
 current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, ".env")
 if os.path.exists(env_path):
@@ -701,7 +701,7 @@ class CustomerFeatureAgent:
         
         final_state = self.app.invoke(
             initial_state,
-            config={"run_name": "CustomerFeatureAgent", "tags": ["feature_agent"]}
+            config={"run_name": "Feature-Agent", "tags": ["feature_agent"]}
         )
         
         if final_state.get("errors"):

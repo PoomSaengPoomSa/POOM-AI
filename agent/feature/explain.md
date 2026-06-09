@@ -1,6 +1,6 @@
 # 🤖 POOM-AI 고객관리 특징 및 지인관계 AI 에이전트 상세 가이드
 
-본 문서(`explain.md`)는 `POOM-AI/agent/customer` 디렉토리에 구현된 **고객 특징 및 지인 관계 분석 AI 에이전트 (Customer Feature Agent)**의 아키텍처, 데이터 흐름, 핵심 기능, 사용된 데이터베이스 도구(Tools), 그리고 디버깅 및 추적 시스템에 대해 상세히 기술합니다.
+본 문서(`explain.md`)는 `POOM-AI/agent/feature` 디렉토리에 구현된 **고객 특징 및 지인 관계 분석 AI 에이전트 (Customer Feature Agent)**의 아키텍처, 데이터 흐름, 핵심 기능, 사용된 데이터베이스 도구(Tools), 그리고 디버깅 및 추적 시스템에 대해 상세히 기술합니다.
 
 ---
 
@@ -107,15 +107,15 @@ LANGSMITH_PROJECT="poom-customer_agent"
 
 * **전체 고객에 대한 분석 실행**:
   ```powershell
-  .venv/Scripts/python -m agent.customer.main
+  .venv/Scripts/python -m agent.feature.main
   ```
 
-* **특정 고객(예: 1001번, 1002번)만 수동 지정하여 실행**:
+* **특정 고객(예: 1번, 2번)만 수동 지정하여 실행**:
   ```powershell
-  .venv/Scripts/python -m agent.customer.main --c_id 1001,1002
+  .venv/Scripts/python -m agent.feature.main --c_id 1,2
   ```
 
 * **사용할 LLM 모델명을 변경하여 실행** (기본값: `gpt-4o-mini`):
   ```powershell
-  .venv/Scripts/python -m agent.customer.main --c_id 1001 --model gpt-4o
+  .venv/Scripts/python -m agent.feature.main --c_id 1 --model gpt-4o
   ```

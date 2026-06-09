@@ -50,7 +50,7 @@ def consult_assistant(req: ConsultAssistantRequest):
 
 @app.post("/api/v1/customer-feature")
 def customer_feature(req: CustomerFeatureRequest):
-    from agent.customer.feature_agent import CustomerFeatureAgent
+    from agent.feature.feature_agent import CustomerFeatureAgent
     try:
         agent = CustomerFeatureAgent()
         result = agent.run(req.c_id)

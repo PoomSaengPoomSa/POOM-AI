@@ -130,7 +130,7 @@ def get_customer_held_products(customer_id: int) -> List[dict]:
         WHERE cp.c_id = %s
     """
     try:
-        from agent.customer.db import get_db_cursor
+        from agent.feature.db import get_db_cursor
         with get_db_cursor() as cursor:
             cursor.execute(query, (customer_id,))
             return cursor.fetchall()
@@ -148,7 +148,7 @@ def get_all_products() -> List[dict]:
         FROM product
     """
     try:
-        from agent.customer.db import get_db_cursor
+        from agent.feature.db import get_db_cursor
         with get_db_cursor() as cursor:
             cursor.execute(query)
             return cursor.fetchall()
@@ -167,7 +167,7 @@ def get_customer_product_matching(customer_id: int) -> List[dict]:
         WHERE c_id = %s
     """
     try:
-        from agent.customer.db import get_db_cursor
+        from agent.feature.db import get_db_cursor
         with get_db_cursor() as cursor:
             cursor.execute(query, (customer_id,))
             return cursor.fetchall()
