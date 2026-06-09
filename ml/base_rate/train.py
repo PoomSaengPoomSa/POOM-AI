@@ -54,52 +54,6 @@ def load_data_from_mysql():
     return df
 
 
-def save_prediction_to_mysql(prob_hike, prob_freeze, prob_cut, run_id):
-    import pymysql
-    load_dotenv(find_dotenv())
-    DB_USER = os.getenv('DB_USER')
-    DB_PASSWORD = os.getenv('DB_PASSWORD')
-    DB_HOST = os.getenv('DB_HOST')
-    DB_PORT = os.getenv('DB_PORT')
-    DB_NAME = os.getenv('DB_NAME')
-    
-    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
-        print("[Warning] Missing DB config. Skipping prediction save.")
-        return
-        
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=int(DB_PORT),
-            charset='utf8mb4'
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS baserate_predictions (
-                    run_id VARCHAR(50) NOT NULL,
-                    prob_hike DOUBLE NOT NULL,
-                    prob_freeze DOUBLE NOT NULL,
-                    prob_cut DOUBLE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                
-                sql = """
-                INSERT INTO baserate_predictions (run_id, prob_hike, prob_freeze, prob_cut)
-                VALUES (%s, %s, %s, %s)
-                """
-                cursor.execute(sql, (run_id, prob_hike, prob_freeze, prob_cut))
-            connection.commit()
-            print("[DB] Successfully saved baserate_predictions (1 row) into MySQL.")
-        finally:
-            connection.close()
-    except Exception as e:
-        print(f"[Error] Failed to save baserate predictions to MySQL: {e}")
-
 
 
 
@@ -295,13 +249,6 @@ def train_model(valid_mode=False):
         print(f"     Precision : {eval_precision:.4f}")
         print(f"     Recall    : {eval_recall:.4f}")
 
-        # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
-        X_latest = df.drop(columns=drop_cols).iloc[[-1]]
-        latest_proba = classifier.predict_proba(X_latest)[0]
-        prob_cut = float(latest_proba[0])
-        prob_freeze = float(latest_proba[1])
-        prob_hike = float(latest_proba[2])
-        
         import uuid
         try:
             active_run = mlflow.active_run()
@@ -311,7 +258,6 @@ def train_model(valid_mode=False):
 
         # 꼬임 버그를 완벽하게 제거하기 위해 명시적 키워드 인자로 호출
         save_performance_to_mysql(accuracy=eval_accuracy, precision=eval_precision, recall=eval_recall, f1_score=eval_f1, run_id=run_id_val)
-        save_prediction_to_mysql(prob_hike=prob_hike, prob_freeze=prob_freeze, prob_cut=prob_cut, run_id=run_id_val)
  
         # -----------------------------------------
         # 3. Save Models

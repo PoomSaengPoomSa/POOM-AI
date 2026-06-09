@@ -77,51 +77,6 @@ def load_data_from_mysql():
         raise RuntimeError(f"Database connection failed and local CSV not found at: {csv_path}")
 
 
-def save_prediction_to_mysql(prob_rise, prob_fall, run_id):
-    import pymysql
-    load_dotenv(find_dotenv())
-    DB_USER = os.getenv('DB_USER')
-    DB_PASSWORD = os.getenv('DB_PASSWORD')
-    DB_HOST = os.getenv('DB_HOST')
-    DB_PORT = os.getenv('DB_PORT')
-    DB_NAME = os.getenv('DB_NAME')
-    
-    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
-        print("[Warning] Missing DB config. Skipping prediction save.")
-        return
-        
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=int(DB_PORT),
-            charset='utf8mb4'
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS gold_predictions (
-                    run_id VARCHAR(50) NOT NULL,
-                    prob_rise DOUBLE NOT NULL,
-                    prob_fall DOUBLE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                
-                sql = """
-                INSERT INTO gold_predictions (run_id, prob_rise, prob_fall)
-                VALUES (%s, %s, %s)
-                """
-                cursor.execute(sql, (run_id, prob_rise, prob_fall))
-            connection.commit()
-            print("[DB] Successfully saved gold_predictions (1 row) into MySQL.")
-        finally:
-            connection.close()
-    except Exception as e:
-        print(f"[Error] Failed to save gold predictions to MySQL: {e}")
-
 
 
 
@@ -319,15 +274,6 @@ def train_model(valid_mode=False):
         print(f"     Precision : {precision:.4f}")
         print(f"     Recall    : {recall:.4f}")
 
-        # MySQL DB에 성능 지표 및 최신 예측 데이터 추가 적재 (하드코딩 없음, run_id 완벽 동기화)
-        X_latest = df.drop(columns=drop_cols).iloc[[-1]]
-        X_latest_scaled = scaler.transform(X_latest)
-        X_latest_scaled_df = pd.DataFrame(X_latest_scaled, columns=selected_features)
-        
-        latest_proba = classifier.predict_proba(X_latest_scaled_df)[0]
-        prob_fall = float(latest_proba[0])
-        prob_rise = float(latest_proba[1])
-        
         import uuid
         try:
             active_run = mlflow.active_run()
@@ -337,7 +283,6 @@ def train_model(valid_mode=False):
 
         # 꼬임 버그를 완벽하게 제거하기 위해 명시적 키워드 인자로 호출
         save_performance_to_mysql(accuracy=accuracy, precision=precision, recall=recall, f1_score=f1, run_id=run_id_val)
-        save_prediction_to_mysql(prob_rise=prob_rise, prob_fall=prob_fall, run_id=run_id_val)
  
         # 5. Save Models
         joblib.dump(classifier, os.path.join(models_dir, 'gold_xgb_classifier.pkl'))

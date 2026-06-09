@@ -60,6 +60,79 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
+def save_contributions_to_mysql_from_df(df, type_val):
+    import pymysql
+    import numpy as np
+    
+    # 2. Map to base variable names
+    base_mapping = {
+        "us_fed_rate": "us_fed_rate",
+        "wti_oil": "wti_oil",
+        "kr_cpi": "kr_cpi",
+        "kr_usd_exchange": "kr_usd_exchange",
+        "vix": "vix",
+        "kospi200": "kospi200",
+        "sp500": "sp500",
+        "kr_base_rate": "kr_base_rate",
+        "kr_unemployment": "kr_unemployment",
+        "kr_gdp": "kr_gdp",
+        "kr_m2": "kr_m2"
+    }
+    
+    grouped_shap = {}
+    for i, row in df.iterrows():
+        feat = row['feature']
+        val = row['importance']
+        base_var = None
+        for k in base_mapping.keys():
+            if feat.startswith(k):
+                base_var = base_mapping[k]
+                break
+        if not base_var:
+            base_var = feat
+        grouped_shap[base_var] = grouped_shap.get(base_var, 0.0) + val
+        
+    total_shap = sum(grouped_shap.values())
+    if total_shap > 0:
+        contributions = {k: v / total_shap for k, v in grouped_shap.items()}
+    else:
+        contributions = {k: 1.0 / len(grouped_shap) for k in grouped_shap.keys()}
+        
+    DB_USER = os.getenv('DB_USER')
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    DB_HOST = os.getenv('DB_HOST')
+    DB_PORT = os.getenv('DB_PORT')
+    DB_NAME = os.getenv('DB_NAME')
+    
+    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
+        print("[Warning] Missing DB config. Skipping SHAP contributions DB save.")
+        return
+        
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            port=int(DB_PORT),
+            charset='utf8mb4'
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(f"DELETE FROM economic_indicator_contribution WHERE type = '{type_val}'")
+                sql = """
+                INSERT INTO economic_indicator_contribution (type, variable, weight)
+                VALUES (%s, %s, %s)
+                """
+                for var, weight in contributions.items():
+                    cursor.execute(sql, (type_val, var, float(weight)))
+            connection.commit()
+            print(f"[DB] Successfully saved {type_val} SHAP contributions to MySQL ({len(contributions)} features).")
+        finally:
+            connection.close()
+    except Exception as e:
+        print(f"[Error] Failed to save SHAP contributions to MySQL: {e}")
+
 def interpret_xai():
     # 1. 환경변수 및 기본 경로 설정
     load_dotenv(find_dotenv())
@@ -83,13 +156,63 @@ def interpret_xai():
     try:
         df = pd.read_csv(csv_path)
         csv_text = df.head(15).to_csv(index=False)
-        # 동적 SHAP 기여도 순위 문자열 생성 (Top 4)
-        top4 = df.head(4)
-        total_imp = top4['importance'].sum()
+        
+        # Calculate grouped and normalized contributions first to ensure consistency with DB
+        base_mapping = {
+            "us_fed_rate": "us_fed_rate",
+            "wti_oil": "wti_oil",
+            "kr_cpi": "kr_cpi",
+            "kr_usd_exchange": "kr_usd_exchange",
+            "vix": "vix",
+            "kospi200": "kospi200",
+            "sp500": "sp500",
+            "kr_base_rate": "kr_base_rate",
+            "kr_unemployment": "kr_unemployment",
+            "kr_gdp": "kr_gdp",
+            "kr_m2": "kr_m2"
+        }
+        
+        grouped_shap = {}
+        for i, row in df.iterrows():
+            feat = row['feature']
+            val = row['importance']
+            base_var = None
+            for k in base_mapping.keys():
+                if feat.startswith(k):
+                    base_var = base_mapping[k]
+                    break
+            if not base_var:
+                base_var = feat
+            grouped_shap[base_var] = grouped_shap.get(base_var, 0.0) + val
+            
+        total_shap = sum(grouped_shap.values())
+        if total_shap > 0:
+            contributions = {k: v / total_shap for k, v in grouped_shap.items()}
+        else:
+            contributions = {k: 1.0 / len(grouped_shap) for k in grouped_shap.keys()}
+            
+        ko_names = {
+            "us_fed_rate": "미국 기준금리",
+            "wti_oil": "WTI 유가",
+            "kr_cpi": "한국 소비자물가지수 (CPI)",
+            "kr_usd_exchange": "원/달러 환율",
+            "vix": "VIX 지수",
+            "kospi200": "KOSPI200 지수",
+            "sp500": "S&P500 지수",
+            "kr_base_rate": "한국 기준금리",
+            "kr_unemployment": "한국 실업률",
+            "kr_gdp": "한국 GDP 지수",
+            "kr_m2": "한국 M2 통화량",
+            "rate_spread_lag3": "장단기 금리차 (3개월전)"
+        }
+        
+        sorted_contribs = sorted(contributions.items(), key=lambda x: x[1], reverse=True)
         shap_rank_str = ", ".join(
-            f"{row['feature_kr']} ({row['feature']}, {int(round(row['importance'] / total_imp * 100))}%)"
-            for _, row in top4.iterrows()
+            f"{ko_names.get(var, var)} ({var}, {int(round(weight * 100))}%)"
+            for var, weight in sorted_contribs[:4]
         )
+        # Update economic_indicator_contribution dynamically
+        save_contributions_to_mysql_from_df(df, "base_rate")
     except Exception as e:
         print(f"[ERROR] 중요도 CSV 로드 실패: {e}")
         csv_text = "데이터 없음"

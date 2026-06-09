@@ -240,9 +240,10 @@ def preprocess():
     # 6. Cleanup Initial NaN Rows (Due to YoY diff/shift)
     # -----------------------------------------
     first_valid = 12  # 12-month lag due to YoY pct change
-    # Exclude the last row as its target variable is shifted to NaN
-    df = df.iloc[first_valid:-1].reset_index(drop=True)
-    df = df.dropna().reset_index(drop=True)
+    # Keep the last row (do do not drop with -1) so we can predict the next month (202606)
+    df = df.iloc[first_valid:].reset_index(drop=True)
+    # Only drop rows where features are NaN. Do not drop rows where target is NaN.
+    df = df.dropna(subset=feature_cols).reset_index(drop=True)
 
     # -----------------------------------------
     # 7. Offloaded Dimensionality Reduction & Feature Selection (Data Leakage Free)
