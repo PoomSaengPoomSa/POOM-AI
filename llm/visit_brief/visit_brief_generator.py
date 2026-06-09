@@ -199,9 +199,15 @@ def generate_briefing_via_llm(customer_info: dict) -> str:
     else:
         history_fallback_text = "\n- 이전 상담 이력 없음"
 
+    exp_summary_str = ""
+    if customer_info.get('expiring_soon'):
+        exp_prods_str = ", ".join(customer_info['expiring_soon'])
+        exp_summary_str = f" 특히 {exp_prods_str} 상품의 만기가 임박해 있으니,"
+    else:
+        exp_summary_str = ""
+
     fallback_content = f"""[Quick Summary]
-최근 총 자산 변동성이 확인된 {customer_info['tendency']} 성향의 고객입니다. 
-당일 예정된 방문 일정에서는 만기 자금의 타행 유출 방어를 위한 정기 특판 재가입 및 맞춤형 포트폴리오 리밸런싱 상담을 집중 지원하십시오.
+최근 총 자산 변동성이 확인된 {customer_info['tendency']} 성향의 고객입니다.{exp_summary_str} 당일 예정된 방문 일정에서는 만기 자금의 타행 유출 방어를 위한 정기 특판 재가입 및 맞춤형 포트폴리오 리밸런싱 상담을 집중 지원하십시오.
 
 [고객 정보 & Preference]
 - 고객명/등급: {customer_info['name']} 고객 ({customer_info['tendency']} 성향)
@@ -391,13 +397,16 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                 ChurnLevel.created_date <= end_of_today
             ).all()
             
+            processed_churn_customer_ids = set()
             for ch in danger_churns:
                 c = ch.customer
-                if c:
+                if c and c.c_id not in processed_churn_customer_ids:
+                    processed_churn_customer_ids.add(c.c_id)
                     dup = db.query(Notification).filter(
                         Notification.u_id == u_id,
                         Notification.category == "이탈 위험",
-                        Notification.title.like(f"%{c.name}%이탈%"),
+                        Notification.c_id == c.c_id,
+                        Notification.title.like(f"%{c.name}%"),
                         Notification.created_time >= start_of_today,
                         Notification.created_time <= end_of_today
                     ).first()
@@ -513,7 +522,20 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                 prods = db.query(CustomerProduct).filter(
                     CustomerProduct.c_id == c.c_id
                 ).all()
-                prods_list = [f"{cp.product.name} (만기: {cp.expiration_date.strftime('%Y-%m-%d') if cp.expiration_date else '없음'})" for cp in prods if cp.product]
+                
+                prods_list = []
+                expiring_soon_list = []
+                for cp in prods:
+                    if cp.product:
+                        exp_date_str = cp.expiration_date.strftime('%Y-%m-%d') if cp.expiration_date else '없음'
+                        if cp.expiration_date:
+                            days_to_exp = (cp.expiration_date - target_date).days
+                            if 0 <= days_to_exp <= 7:
+                                d_day_str = f"D-{days_to_exp}" if days_to_exp > 0 else "금일 만기"
+                                prods_list.append(f"[★만기임박! {d_day_str}] {cp.product.name} (만기: {exp_date_str})")
+                                expiring_soon_list.append(f"{cp.product.name} ({d_day_str})")
+                                continue
+                        prods_list.append(f"{cp.product.name} (만기: {exp_date_str})")
                 
                 # C. 최신 이탈 등급 조회
                 churn = db.query(ChurnLevel).filter(
@@ -565,6 +587,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                     "pension": c.pension,
                     "loan": c.loan,
                     "products": prods_list if prods_list else ["보유 중인 만기성 상품 없음"],
+                    "expiring_soon": expiring_soon_list,
                     "churn_grade": churn_grade,
                     "churn_reason": churn_reason,
                     "transactions": txs_list if txs_list else ["최근 5건 거래 내역 없음"],
