@@ -15,7 +15,11 @@ def save_contributions_to_mysql(features, shap_values):
     import numpy as np
     
     # 1. Calculate absolute mean SHAP values for each feature
-    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    shap_values = np.array(shap_values)
+    if shap_values.ndim == 1:
+        mean_abs_shap = np.abs(shap_values)
+    else:
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
     
     # 2. Map to base variable names (removing _change, _lag1, _ma3, seasonality, etc.)
     base_mapping = {
@@ -191,6 +195,14 @@ def run_explain(valid_mode=False):
     X_test_df = pd.DataFrame(X_test_sc, columns=selected_features)
     X_train_df = pd.DataFrame(X_train_sc, columns=selected_features)
     
+    # Load latest row for explanation (aligned with predict.py)
+    latest_row = df.iloc[-1:]
+    latest_date = latest_row['date_ym'].values[0]
+    X_latest = latest_row[selected_features].copy()
+    for col in X_latest.columns:
+        X_latest[col] = pd.to_numeric(X_latest[col], errors='coerce')
+    X_latest_df = pd.DataFrame(X_latest.values, columns=selected_features)
+    
     print("\n" + "=" * 55)
     print("Computing SHAP Values (Explainable AI)")
     print("=" * 55)
@@ -236,6 +248,23 @@ def run_explain(valid_mode=False):
         data=X_test_df.values,
         feature_names=selected_features
     )
+    
+    # -----------------------------------------
+    # Compute SHAP for the latest row (XAI explanation target)
+    # -----------------------------------------
+    print("  Computing SHAP for the latest prediction row...")
+    shap_values_latest_list = []
+    for name, model in ensemble.models.items():
+        try:
+            explainer = shap.TreeExplainer(model, data=X_train_df)
+            sv = explainer(X_latest_df)
+            shap_values_latest_list.append(sv.values)
+        except Exception as e:
+            explainer = shap.Explainer(model, X_train_df)
+            sv = explainer(X_latest_df)
+            shap_values_latest_list.append(sv.values)
+            
+    mean_shap_values_latest = np.mean(shap_values_latest_list, axis=0) # shape (1, n_features)
     
     # -----------------------------------------
     # 1. Save Beeswarm Plot (Global Feature Impact)
@@ -285,13 +314,42 @@ def run_explain(valid_mode=False):
         # Save indices of top 3 errors for the text report
         top_err_indices = pred_df.sort_values(by='abs_error_ensemble', ascending=False).index.tolist()[:3]
         
-        # Save SHAP values CSV for reporting
-        shap_df = pd.DataFrame(mean_shap_values, columns=[f"shap_{f}" for f in selected_features])
-        shap_df['date_ym'] = test_df['date_ym'].values
+        # Save SHAP values CSV for reporting (representing the latest prediction)
+        shap_df = pd.DataFrame(mean_shap_values_latest, columns=[f"shap_{f}" for f in selected_features])
+        shap_df['date_ym'] = [latest_date]
         shap_df.to_csv(os.path.join(results_dir, 'shap_values.csv'), index=False, encoding='utf-8-sig')
+        print(f"    - Saved latest SHAP values CSV to: {os.path.join(results_dir, 'shap_values.csv')}")
         
         # Save dynamic contributions to MySQL DB for real-time dashboard binding
-        save_contributions_to_mysql(selected_features, mean_shap_values)
+        save_contributions_to_mysql(selected_features, mean_shap_values_latest[0])
+        
+        # ── SHAP Waterfall Plot for the Latest Predicted Row ──
+        try:
+            latest_explanation = shap.Explanation(
+                values=mean_shap_values_latest[0],
+                base_values=mean_base_value,
+                data=X_latest_df.iloc[0].values,
+                feature_names=selected_features
+            )
+            plt.figure(figsize=(10, 6))
+            shap.plots.waterfall(latest_explanation, show=False)
+            
+            fig = plt.gcf()
+            for ax_obj in fig.axes:
+                for text_obj in ax_obj.texts:
+                    txt = text_obj.get_text()
+                    if '\u2212' in txt:
+                        text_obj.set_text(txt.replace('\u2212', '-'))
+                new_lbls = [label.get_text().replace('\u2212', '-') for label in ax_obj.get_yticklabels()]
+                ax_obj.set_yticklabels(new_lbls)
+                
+            plt.tight_layout()
+            waterfall_latest_path = os.path.join(results_dir, 'shap_waterfall_latest.png')
+            plt.savefig(waterfall_latest_path, dpi=150)
+            plt.close()
+            print(f"    - Saved latest waterfall plot to: {waterfall_latest_path}")
+        except Exception as e:
+            print(f"    - [WARNING] Waterfall plot for latest prediction failed: {e}")
         
     print("\nSHAP XAI Analysis Completed Successfully!")
  

@@ -117,7 +117,6 @@ def preprocess():
     
     # 1. MySQL에서 직접 데이터 로드
     df = load_data_from_mysql()
-    df = df.dropna(subset=["house_price_idx"]).copy()
     df = df.sort_values("date_ym").reset_index(drop=True)
 
     # Target creation
