@@ -105,6 +105,16 @@ def run_customer_main(req: CustomerMainRequest):
     main_agent_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent", "customer-main-agent"))
     if main_agent_dir not in sys.path:
         sys.path.insert(0, main_agent_dir)
+        
+    # 패키지 캐시 충돌 방지: agent 패키지 경로에 customer-main-agent/agent 경로 병합
+    try:
+        import agent
+        sub_agent_path = os.path.join(main_agent_dir, "agent")
+        if os.path.exists(sub_agent_path) and sub_agent_path not in agent.__path__:
+            agent.__path__.append(sub_agent_path)
+    except Exception as e:
+        print(f"[Warning] agent 패키지 경로 병합 실패: {e}")
+        
     try:
         from agent.main_agent import MainAgent
         agent = MainAgent()
