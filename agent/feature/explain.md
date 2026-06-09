@@ -1,121 +1,145 @@
-# 🤖 POOM-AI 고객관리 특징 및 지인관계 AI 에이전트 상세 가이드
+# POOM Premium 자산관리 고객 특징 및 지인 관계 분석 에이전트 설명서 (explain.md)
 
-본 문서(`explain.md`)는 `POOM-AI/agent/feature` 디렉토리에 구현된 **고객 특징 및 지인 관계 분석 AI 에이전트 (Customer Feature Agent)**의 아키텍처, 데이터 흐름, 핵심 기능, 사용된 데이터베이스 도구(Tools), 그리고 디버깅 및 추적 시스템에 대해 상세히 기술합니다.
+본 문서는 **POOM (품)** 금융 플랫폼의 WM(Wealth Management) 비즈니스 강화를 위한 **고객 특징 및 지인 관계 분석 AI 에이전트 (Customer Feature Agent)**의 설계 사양서입니다. 
 
----
-
-## 📌 1. 에이전트 개요 (Overview)
-
-고객 특징 및 지인 관계 분석 에이전트는 고객의 최신 상담 기록 원문으로부터 핵심 고객 특징(라이프스타일, 투자 성향 등)과 지인 관계 정보(가족, 동료 등)를 추출하고 정제하여 데이터베이스에 반영하는 **상태 기반 오케스트레이션 에이전트**입니다.
-
-이 에이전트는 최신 LLM(기본값: `gpt-4o-mini`)과 상태 관리 프레임워크인 **LangGraph**, 그리고 **LangChain**을 사용하여 동작의 일관성을 유지하며, 자가 검증(Validation) 및 중복 제거(Refinement) 로직을 거쳐 안전하게 DB 적재 작업을 수행합니다.
+처음 이 모듈을 접하는 개발자도 전체 아키텍처, 데이터 흐름, 핵심 제어 노드 및 데이터베이스 보안 가드레일을 완전히 이해할 수 있도록 쉽게 풀어서 설명합니다.
 
 ---
 
-## 🔄 2. LangGraph 워크플로우 & 데이터 흐름
+## 1. 에이전트 개요 (Agent Overview)
 
-에이전트는 특징 분석 파이프라인과 지인 관계 분석 파이프라인이 병렬적으로 처리되도록 설계되었습니다. `load_report` 노드 이후 두 갈래로 나뉘어 병렬 실행(Branching)되며, 데이터베이스 반영이 모두 끝난 지점에서 동기화 조인(Joining)되어 최종 키워드 추출 작업을 수행합니다.
+PB(Private Banker)가 작성한 최신 고객 상담 보고서 원문으로부터 **고객 특징(라이프스타일, 투자 성향, 관심사 등)**과 **지인 및 가족 관계(관계 유형, 생년월일, 직업, 배우자 여부, 결혼기념일 등)**를 지능적으로 분석하여 데이터베이스에 구조화 포맷으로 자동 적재하는 역할을 담당합니다.
+
+### 핵심 설계 지향점
+- **RAG 컨텍스트의 정교화**: 적재된 고객 특징 데이터는 WM 상담 시뮬레이터 에이전트가 고객의 최신 맥락을 파악하고 맞춤형 금융 상품 피칭을 제공하는 원천 정보가 됩니다.
+- **지인 관리 연동**: 가족의 기념일 및 직업 정보는 PB의 관계 마케팅(Relationship Marketing) 일정 제안(예: "자녀 생일 안부 안내")으로 즉각 연계됩니다.
+- **워드클라우드 제공**: 최근 1달간 적재된 특징을 집약하여 핵심 키워드(5~8개)를 산출해 프론트엔드의 고객 프로필 워드클라우드 시각화용 데이터로 업데이트합니다.
+
+---
+
+## 2. 전체 아키텍처 및 데이터 흐름
+
+에이전트는 상태 기반 제어 프레임워크인 **LangGraph**를 활용하여 병렬 분기(Branching) 및 동기화 조인(Joining) 형태로 설계되었습니다. 특징 분석과 관계 분석을 분리 가동하여 데이터 오염을 예방하고 처리 레이턴시를 최소화합니다.
+
+### LangGraph 워크플로우 흐름도
 
 ```mermaid
 graph TD
-    Node1[load_report] -->|병렬 분기 Branch 1| Node2[load_existing_features]
-    Node1 -->|병렬 분기 Branch 2| Node3[load_existing_relationships]
-
-    subgraph "Branch 1: 고객 특징 파이프라인 (Feature Pipeline)"
-        Node2 --> Node4[extract_features]
-        Node4 --> Node5[refine_and_deduplicate_features]
-        Node5 --> Node6[save_features]
-    end
-
-    subgraph "Branch 2: 지인 관계 파이프라인 (Relationship Pipeline)"
-        Node3 --> Node7[extract_relationships]
-        Node7 --> Node8[validate_relationships]
-        Node8 --> Node9[save_relationships]
-    end
-
-    Node6 -->|동기화 조인 Join| Node10[load_features_last_1m]
-    Node9 -->|동기화 조인 Join| Node10
-
-    Node10 --> Node11[extract_keywords]
-    Node11 --> Node12[save_keyword_features]
-    Node12 --> END[끝]
+    Start([에이전트 시작]) --> load_report[load_report<br>최신 상담 보고서 로드]
     
-    style Node8 fill:#f9f,stroke:#333,stroke-width:2px
-    style Node5 fill:#bbf,stroke:#333,stroke-width:2px
+    %% 병렬 분기
+    load_report -->|Branch 1: 특징 파이프라인| load_existing_features[load_existing_features<br>기존 12개월 특징 조회]
+    load_report -->|Branch 2: 관계 파이프라인| load_existing_relationships[load_existing_relationships<br>기존 지인 관계 리스트 조회]
+
+    %% Branch 1 상세
+    subgraph "고객 특징 분석 파이프라인 (Feature Pipeline)"
+        load_existing_features --> extract_features[extract_features<br>6대 카테고리 특징 1차 추출]
+        extract_features --> refine_features[refine_and_deduplicate_features<br>기존 데이터와 대조 분석: ADD / SKIP / UPDATE 결정]
+        refine_features --> save_features[save_features<br>MySQL DB 반영]
+    end
+
+    %% Branch 2 상세
+    subgraph "지인 관계 분석 파이프라인 (Relationship Pipeline)"
+        load_existing_relationships --> extract_relationships[extract_relationships<br>신상 및 생일/결혼기념일 상대날짜 분석]
+        extract_relationships --> validate_relationships[validate_relationships<br>이중 검증 노드: 환각 방지 및 DB 규격 보정]
+        validate_relationships --> save_relationships[save_relationships<br>기존 정보와 문맥 병합 후 DB 반영]
+    end
+
+    %% 동기화 조인
+    save_features --> load_features_last_1m[load_features_last_1m<br>최근 1개월 이내 특징 조회]
+    save_relationships --> load_features_last_1m[load_features_last_1m<br>동기화 조인 완료 및 로딩]
+
+    %% 최종 시퀀스
+    load_features_last_1m --> extract_keywords[extract_keywords<br>워드클라우드용 대표 키워드 추출]
+    extract_keywords --> save_keyword_features[save_keyword_features<br>customer.features 컬럼 업데이트]
+    save_keyword_features --> End([에이전트 종료])
 ```
-
-### 🔄 노드별 역할 및 입출력 상세
-
-| 단계 | 노드명 (Node) | 입력 데이터 (Input) | 출력 데이터 (Output) | 주요 로직 및 수행 작업 |
-| :--- | :--- | :--- | :--- | :--- |
-| 1 | **`load_report`** | `customer_id` | `report` | 고객의 가장 최근 상담 보고서 원문과 상세 메타데이터를 조회하여 상태에 로드합니다. |
-| 2 | **`load_existing_features`** | `customer_id` | `existing_features` | 정교한 중복 대조를 위해 최근 12개월간 적재된 기존 고객 특징 리스트를 로드합니다. |
-| 3 | **`load_existing_relationships`**| `customer_id` | `existing_relationships`| 고객의 기존 지인 관계 정보 목록을 DB에서 모두 불러옵니다. |
-| 4 | **`extract_features`** | `report` | `extracted_features` | LLM을 활용하여 상담 보고서 원문에서 6대 카테고리(`관계`, `성향`, `상품`, `기호`, `건강`, `기타`)에 매핑되는 원시 특징들을 추출합니다. |
-| 5 | **`refine_and_deduplicate_features`**| `extracted_features`, `existing_features`| `refined_decisions` | 1차 추출된 특징 후보군과 기존 특징들을 LLM으로 대조 분석하여 **`ADD`(신규 추가)**, **`UPDATE`(기존 수정)**, **`SKIP`(중복 생략)** 의사결정을 도출합니다. |
-| 6 | **`save_features`** | `refined_decisions` | 없음 (DB 기록) | 이전 노드의 결정에 따라 `customer_information` 테이블에 새로운 행을 추가하거나 기존 행을 업데이트하고, 중복 건은 생략 처리합니다. |
-| 7 | **`extract_relationships`** | `report` | `extracted_relationships` | 상담 본문에서 지인 및 가족과의 관계 유형, 상세 내용, 생년월일, 직업, 배우자 여부, 결혼기념일 정보를 정교하게 추출합니다. **상담 기준일(Reference Date)을 바탕으로 '3일 후', '일주일 후'와 같은 상대 날짜 표현도 YYYY-MM-DD 형식으로 정확하게 변환**합니다. |
-| 8 | **`validate_relationships`** | `report`, `extracted_relationships`| `validated_relationships`| **[검증 노드]** 1차 추출된 지인 정보가 원문에 실제로 존재하는지 대조 검증하고, 허구 정보(환각)를 걸러냅니다. 날짜 형식이 상담 기준일 대비 일관성 있게 계산되었는지 검증하고 교정하며, DB 스키마 제한(50자)에 맞춰 필드를 보정합니다. |
-| 9 | **`save_relationships`** | `validated_relationships`, `existing_relationships`| 없음 (DB 기록) | 검증된 지인 관계 중 신규 관계는 새로 등록(`INSERT`)합니다. 기존 관계가 이미 존재하면 LLM 정제 및 중복 제거 처리(`refine_merged_relationship_info`)를 호출하여 **기존 내용과 새로운 내용 중 의미가 겹치는 부분들을 자연스럽게 정제 및 병합**한 후 `information`을 업데이트하고, Demographic 정보(`birthday`, `job` 등)를 병합 갱신합니다. |
-| 10 | **`load_features_last_1m`** | `customer_id` | `features_last_1m` | 최근 1개월 이내에 생성된 고객 특징들을 DB에서 선별 조회합니다. |
-| 11 | **`extract_keywords`** | `features_last_1m` | `keyword_features_str` | 최근 특징 텍스트들을 종합하여 워드클라우드 시각화용 대표 키워드 리스트(5~8개)를 도출하고 콤마로 연결된 문자열을 만듭니다. |
-| 12 | **`save_keyword_features`** | `keyword_features_str` | 없음 (DB 기록) | 추출된 핵심 키워드 문자열을 `customer` 테이블의 `features` 컬럼에 최종 업데이트합니다. |
 
 ---
 
-## 🛠️ 3. 데이터베이스 & 에이전트 도구 (Database & Tools)
+## 3. 세부 상태 노드(Node) 및 로직 가이드
 
-에이전트가 데이터베이스(MySQL)와 상호작용하기 위해 사용하는 전용 도구(Python 함수) 정의입니다. ([tools.py](tools.py)에 구현됨)
+### 3.1. 공통 로드 단계
+*   **`load_report`**
+    - `consultation_report` 및 `consultation_memo` 테이블을 조인하여 고객의 가장 최근 상담 텍스트와 상담일(`consult_date`)을 로드합니다.
+    - 상담 텍스트가 없는 경우 에러를 반환하고 실행을 종료합니다.
 
-| 도구명 (Tool Function) | 대상 테이블 | 주요 기능 및 SQL 동작 |
+### 3.2. 고객 특징 파이프라인 (Branch 1)
+*   **`load_existing_features`**
+    - 과거 분석 이력과의 정밀 대조를 위해 최근 12개월간 적재되어 있던 고객 특징 리스트를 조회합니다.
+*   **`extract_features`** ([prompt/feature_extraction_system.md](./prompt/feature_extraction_system.md))
+    - 상담 보고서 원문에서 **6대 카테고리(`관계`, `성향`, `상품`, `기호`, `건강`, `기타`)**에 부합하는 특징 데이터 후보군을 1차 도출합니다.
+*   **`refine_and_deduplicate_features`** ([prompt/feature_refinement_system.md](./prompt/feature_refinement_system.md))
+    - 신규 추출된 후보군과 로드된 12개월 기존 특징들을 LLM으로 대조 및 정밀 비교하여 아래의 3가지 의사결정을 도출합니다.
+      - **`ADD`**: 기존에 없던 완전히 새로운 라이프스타일이나 성향인 경우 신규 등록 결정.
+      - **`SKIP`**: 기존에 이미 완벽하게 동일한 내용이 적재되어 있는 경우 중복 제외 결정.
+      - **`UPDATE`**: 기존 정보와 일맥상통하나 최신 내용으로 내용 수정이 필요하다고 판단되는 경우 기존 `ci_id`를 수정 대상으로 매핑하여 내용 갱신 결정.
+*   **`save_features`**
+    - 의사결정 결과에 따라 `customer_information` 테이블에 새로운 행을 추가(`INSERT`)하거나 기존 행을 갱신(`UPDATE`)합니다.
+
+### 3.3. 지인 관계 파이프라인 (Branch 2)
+*   **`load_existing_relationships`**
+    - 중복 등록을 방지하기 위해 `customer_relationship` 테이블에서 기존 지인 리스트를 전부 조회합니다.
+*   **`extract_relationships`** ([prompt/relationship_extraction_system.md](./prompt/relationship_extraction_system.md))
+    - 상담 본문에서 지인 및 가족의 이름/관계명, 생년월일, 직업, 배우자 여부, 결혼기념일 등을 구조화하여 추출합니다.
+    - **상대 날짜 절대화 (Temporal Anchoring)**: 상담 본문에 "아들 생일이 3일 뒤", "내년 결혼기념일" 등 상대 표현이 있는 경우, 상담일(`consult_date`, 예: `2026-06-01`)을 기준으로 정확하게 산출하여 `2026-06-04` 와 같은 절대 날짜 문자열(`YYYY-MM-DD`)로 변환합니다.
+*   **`validate_relationships`** ([prompt/relationship_validation_system.md](./prompt/relationship_validation_system.md))
+    - **[환각 방지 예외 처리]**: 1차 추출된 지인 신상 및 상대 날짜 계산 결과가 상담 원문에서 진정 유추 가능한 팩트인지 LLM으로 재검증(Double-check)하여 가상의 인물이 생성되는 현상을 차단합니다. 또한 DB 규격에 맞춰 문자열 길이를 정밀 보정합니다.
+*   **`save_relationships`**
+    - 새로운 지인은 새로 `INSERT` 합니다.
+    - **지식 병합 (Knowledge Merging)** ([prompt/relationship_merge_system.md](./prompt/relationship_merge_system.md)): 이미 존재하는 관계 유형(예: "배우자")에 추가적인 상담 정보가 들어왔을 때, 단순히 글자 뒤에 이어 붙이지 않고 **LLM 병합 로직을 통과시켜 문맥적으로 겹치는 내용을 아름다운 하나의 문장으로 요약 및 병합한 후 `UPDATE`**를 적용합니다.
+
+### 3.4. 워드클라우드 키워드 가공 단계
+*   **`load_features_last_1m`**
+    - 에이전트 처리가 끝난 직후, 최근 1개월 이내에 최종 DB 적재 완료된 특징 메모 목록을 가져옵니다.
+*   **`extract_keywords`** ([prompt/keyword_extraction_system.md](./prompt/keyword_extraction_system.md))
+    - 최근 특징 텍스트 데이터를 종합하여 형태소 분석 및 의미 분류를 거쳐, 워드클라우드에 적합한 핵심 키워드 리스트(5~8개)를 산출해 콤마로 연결된 단일 문자열을 도출합니다.
+*   **`save_keyword_features`**
+    - 콤마 문자열(예: `해외여행,정기예금,테니스,노후대비`)을 `customer` 테이블의 `features` 컬럼에 업데이트합니다.
+
+---
+
+## 4. 데이터베이스 및 전용 도구 (Tools)
+
+에이전트는 데이터베이스(MySQL)와 정밀하게 연동하기 위해 [tools.py](./tools.py)에 구현된 SQLAlchemy/DB Cursor 도구들을 사용합니다.
+
+| 도구 함수 (Python) | 관련 테이블 | SQL 기능 설명 |
 | :--- | :--- | :--- |
-| **`get_recent_consultation_report`** | `consultation_report` | 특정 고객의 최신 상담 기록 원문 텍스트를 조회합니다. |
-| **`get_customer_features`** | `customer_information` | 분석 이력 대조를 위해 특정 기간(월 단위) 동안 기록된 특징 메모를 조회합니다. |
-| **`save_customer_feature`** | `customer_information` | 새로 정제된 특징 요약을 `customer_information`에 추가합니다 (`INSERT`). |
-| **`update_customer_feature`** | `customer_information` | 기존 특징의 요약 설명을 수정하고 갱신일을 업데이트합니다 (`UPDATE`). |
-| **`get_customer_relationships_all`** | `customer_relationship` | 대상 고객에 연동된 모든 지인 관계 데이터 행(cr_id, 관계명, 본문, 생년월일, 직업, 배우자 여부, 결혼기념일)을 조회합니다. |
-| **`save_customer_relationship`** | `customer_relationship` | 신규 지인 관계 데이터를 입력합니다 (`INSERT`). |
-| **`update_customer_relationship`** | `customer_relationship` | 기존 지인 관계에 대해 본문 및 생년월일, 직업 등의 정보를 병합하여 갱신합니다 (`UPDATE`). |
-| **`save_customer_keyword_features`** | `customer` | 워드클라우드용 키워드 문자열을 `customer.features` 컬럼에 덮어씁니다 (`UPDATE`). |
+| `get_recent_consultation_report` | `consultation_report` <br> `consultation_memo` | 해당 고객의 최신 상담 기록 원문 텍스트 및 상담일 조회 |
+| `get_customer_features` | `customer_information` | 기간 한정(1개월 또는 12개월)으로 적재된 특징 데이터 목록 조회 |
+| `save_customer_feature` | `customer_information` | `category`와 정제 요약 `contents`를 새로운 행으로 추가 (`INSERT`) |
+| `update_customer_feature` | `customer_information` | 기존 ci_id의 내용을 수정하고 시간 갱신 (`UPDATE`) |
+| `get_customer_relationships_all` | `customer_relationship` | 대상 고객의 등록된 전체 지인 정보 행들 조회 |
+| `save_customer_relationship` | `customer_relationship` | 신규 지인 신상(생일, 직업, 배우자 여부 등) 입력 (`INSERT`) |
+| `update_customer_relationship` | `customer_relationship` | 기존 지인에 대한 정보와 문맥 병합 갱신 (`UPDATE`) |
+| `save_customer_keyword_features` | `customer` | 워드클라우드용 콤마 구분 키워드 문자열 기입 (`UPDATE`) |
 
 ---
 
-## 🕵️‍♂️ 4. LangSmith 연동 및 추적
+## 5. 비즈니스 예외 처리 및 가드레일 (Guardrails)
 
-에이전트 내부의 노드 흐름과 LLM 호출 결과, 토큰 사용량 및 입력/출력 맵을 추적하기 위해 **LangSmith**가 완전하게 연동되어 있습니다.
+1. **DB 스키마 한계 방어 (VARCHAR Overflow 방지)**
+   - `customer_information.contents` 컬럼은 최대 500자 크기이며, `customer_relationship.relationship` 및 `job` 컬럼은 50자 규격입니다.
+   - LLM이 창의적이고 상세하게 출력하려다 발생할 수 있는 SQL 크래시를 막기 위해 에이전트 내 데이터 핸들러에서 글자 수를 강제로 Slice(`contents[:497] + "..."`, `relationship[:50]`) 처리합니다.
+2. **환각(Hallucination) 검출 검증 노드 (`validate_relationships`)**
+   - RAG나 데이터 분석 시 가장 큰 맹점은 LLM이 가상의 지인 이름이나 잘못된 결혼기념일 날짜를 지어내는 것입니다. 에이전트는 1차 추출 후 데이터베이스 적재 전에 전용 검증 노드를 한 단계 배치하여 원문 팩트 기반 검토를 강제 실행합니다.
+3. **상대 날짜 계산 유효성 검증**
+   - "3일 뒤", "다음 달" 같은 시간 단서가 상담 원문에 있을 때, 상담일 정보가 비어 있는 경우 기준일을 임의로 잡지 않고 `null` 처리를 유도하여 잘못된 기념일이 DB에 주입되는 현상을 방어합니다.
 
-### 4.1. 환경 변수 설정
-프로젝트 루트 폴더(`.env`)에 정의된 다음 변수들을 통해 LangChain 표준 트레이싱 모듈과 연동됩니다:
-```env
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
-LANGSMITH_API_KEY=your_langsmith_api_key
-LANGSMITH_PROJECT="poom-customer_agent"
+---
+
+## 6. 에이전트 구동 및 CLI 가이드
+
+에이전트는 프로젝트 루트 경로에서 가상 환경 파이썬 인터프리터 및 CLI 명령어로 손쉽게 제어할 수 있습니다.
+
+```powershell
+# 1. 전체 고객에 대하여 에이전트 일괄 가동 (일일 배치 용도)
+.venv/Scripts/python -m agent.feature.main
+
+# 2. 특정 고객 ID (예: 1번, 2번)만 수동 필터 지정하여 분석 실행
+.venv/Scripts/python -m agent.feature.main --c_id 1,2
+
+# 3. 모델명을 상용 고성능 모델(gpt-4o)로 교체하여 실행 (기본값: gpt-4o-mini)
+.venv/Scripts/python -m agent.feature.main --c_id 1 --model gpt-4o
 ```
-실행 시 에이전트는 해당 설정값들을 자동으로 감지하여 모든 체인 및 그래프 실행 흐름을 LangSmith 프로젝트로 안전하게 실시간 전송합니다.
-
----
-
-## 🚀 5. 에이전트 실행 방법
-
-에이전트 모듈은 가상 환경 활성화 상태에서 명령줄 인터페이스(CLI)를 통해 구동됩니다.
-
-### 5.1. 사전 구성 (가상 환경 활성화)
-프로젝트의 루트 폴더(POOM-AI)에서 파이썬 명령을 호출합니다.
-
-### 5.2. 실행 명령어 (Runners)
-
-* **전체 고객에 대한 분석 실행**:
-  ```powershell
-  .venv/Scripts/python -m agent.feature.main
-  ```
-
-* **특정 고객(예: 1번, 2번)만 수동 지정하여 실행**:
-  ```powershell
-  .venv/Scripts/python -m agent.feature.main --c_id 1,2
-  ```
-
-* **사용할 LLM 모델명을 변경하여 실행** (기본값: `gpt-4o-mini`):
-  ```powershell
-  .venv/Scripts/python -m agent.feature.main --c_id 1 --model gpt-4o
-  ```
+* LangSmith 트레이싱은 `.env` 파일의 `LANGSMITH_TRACING=true` 설정에 의해 가동 즉시 자동으로 실시간 업로드됩니다.

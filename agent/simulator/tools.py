@@ -46,8 +46,7 @@ def query_knowledge_base(
     question: str, 
     chroma_db_dir: str, 
     threshold: float = 0.50,
-    asset_category: Optional[str] = None,
-    target_segment: Optional[str] = None
+    asset_category: Optional[str] = None
 ) -> Optional[str]:
     """
     Query ChromaDB vector database across all document sources (excluding db_product metadata) with metadata filtering.
@@ -71,14 +70,11 @@ def query_knowledge_base(
         )
         query_embedding = emb_response.data[0].embedding
         
-        # 2. ChromaDB 쿼리 (where 조건을 활용하여 db_product 제외 및 카테고리/세그먼트 필터 연동)
+        # 2. ChromaDB 쿼리 (where 조건을 활용하여 db_product 제외 및 카테고리 필터 연동)
         filters = [{"source": {"$ne": "db_product"}}]
         
         if asset_category and asset_category != "공통":
             filters.append({"asset_category": asset_category})
-            
-        if target_segment and target_segment != "공통":
-            filters.append({"target_segment": {"$in": ["공통", target_segment]}})
             
         where_filter = {"$and": filters} if len(filters) > 1 else filters[0]
         
