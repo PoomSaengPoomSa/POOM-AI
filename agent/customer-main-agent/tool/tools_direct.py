@@ -25,7 +25,7 @@ def get_trend_report():
             SELECT type, content, created_at
             FROM trend_llm_report
             WHERE type = 'gold' 
-              AND DATE(created_at) = CURDATE()
+              AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)
             ORDER BY created_at DESC
             LIMIT 1
         )
