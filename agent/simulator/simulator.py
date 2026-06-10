@@ -138,35 +138,20 @@ def load_context_node(state: SimulatorState) -> Dict[str, Any]:
     Node 1: Load customer profile markdown/txt and historical conversations.
     """
     customer_id = state["customer_id"]
-    data_dir = os.path.join(current_dir, "data/history")
-    
-    # Load profile content
-    md_path = os.path.join(data_dir, f"customer_{customer_id}.md")
-    txt_path = os.path.join(data_dir, f"customer_{customer_id}.txt")
-    
-    context_content = ""
-    if os.path.exists(md_path):
-        with open(md_path, "r", encoding="utf-8") as f:
-            context_content = f.read()
-    elif os.path.exists(txt_path):
-        with open(txt_path, "r", encoding="utf-8") as f:
-            context_content = f.read()
-    else:
-        context_content = "고객 정보가 존재하지 않습니다. 기본적인 금융 상담으로 대응해 주세요."
-        
-    # Load history
-    history_path = os.path.join(data_dir, f"customer_{customer_id}_history.json")
-    history = []
-    if os.path.exists(history_path):
-        try:
-            with open(history_path, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        except Exception:
-            history = []
-            
+
+    # S3에서 프로필 로드
+    context_content = (
+        s3_read_text(f"simulator/history/customer_{customer_id}.md")
+        or s3_read_text(f"simulator/history/customer_{customer_id}.txt")
+        or "고객 정보가 존재하지 않습니다. 기본적인 금융 상담으로 대응해 주세요."
+    )
+
+    # S3에서 히스토리 로드
+    history = s3_read_json(f"simulator/history/customer_{customer_id}_history.json") or []
+
     # Limit history to prevent context bloat
     history = history[-10:]
-    
+
     return {"context_content": context_content, "history": history}
 
 
@@ -426,79 +411,60 @@ def generate_answer_node(state: SimulatorState) -> Dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY")
     
     try:
-        # 메시지 히스토리 조립
         messages = []
-        # System
         messages.append({"role": "system", "content": get_simulator_system_prompt()})
-        # User Context (Profile + RAG + 1M Features)
         user_context_prompt = get_simulator_user_prompt(
             context_content=context_content,
             recent_features_1m=recent_features_1m,
             retrieved_knowledge=retrieved_knowledge
         )
         messages.append({"role": "user", "content": user_context_prompt})
-        
-        # Assistant Acknowledgment (기존 simulator.py 흐름 유지)
         messages.append({
             "role": "assistant",
             "content": get_assistant_acknowledgment()
         })
         
-        # Historical turns (clean past references to prevent source mixing)
         import re
         for turn in history:
             cleaned_turn = turn.copy()
             if turn["role"] == "assistant":
-                # Remove [참조 출처: ...] or 참조 출처: ... from past history turns
                 cleaned_turn["content"] = re.sub(r'\n\n\[참조 출처: .*?\]', '', turn["content"])
                 cleaned_turn["content"] = re.sub(r'\[참조 출처: .*?\]', '', cleaned_turn["content"])
                 cleaned_turn["content"] = re.sub(r'참조 출처: .*', '', cleaned_turn["content"])
             messages.append(cleaned_turn)
             
-        # Current PB query
         messages.append({"role": "user", "content": question})
         
-        # LLM Call
         llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=0.4, api_key=api_key)
         response = llm.invoke(messages)
         answer = response.content
         
-        # Clean any self-generated reference formatting LLM produced
         answer = re.sub(r'\n\n\[참조 출처: .*?\]', '', answer)
         answer = re.sub(r'\[참조 출처: .*?\]', '', answer)
         answer = re.sub(r'참조 출처: .*', '', answer)
-        
-        # Strip markdown formatting for terminal compatibility (removes **, *, _, #)
         answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', answer)
         answer = re.sub(r'\*([^*]+)\*', r'\1', answer)
         answer = re.sub(r'__([^_]+)__', r'\1', answer)
         answer = re.sub(r'_([^_]+)_', r'\1', answer)
         answer = re.sub(r'(?m)^#+\s+', '', answer)
-        
         answer = answer.strip()
         
-        # Append references strictly based on system-retrieved knowledge
         if retrieved_knowledge.strip():
             sources = extract_sources_from_knowledge(retrieved_knowledge)
             if sources:
                 source_suffix = "\n\n[참조 출처: " + ", ".join(sources) + "]"
                 answer += source_suffix
         
-        # Save updated history back to file
+        # S3에 히스토리 저장
         history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": answer})
-        
-        data_dir = os.path.join(current_dir, "data/history")
-        history_path = os.path.join(data_dir, f"customer_{customer_id}_history.json")
-        
-        os.makedirs(data_dir, exist_ok=True)
-        with open(history_path, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        s3_write_json(f"simulator/history/customer_{customer_id}_history.json", history)
             
         return {"answer": answer}
     except Exception as e:
         return {"errors": [f"generate_answer failed: {str(e)}"]}
-
+    
+    
 
 # 5. Compiled State Graph for Simulator Agent
 workflow = StateGraph(SimulatorState)
