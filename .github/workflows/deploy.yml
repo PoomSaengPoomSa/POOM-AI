@@ -7,8 +7,14 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout POOM-AI
         uses: actions/checkout@v4
+      - name: Checkout POOM-BACK
+        uses: actions/checkout@v4
+        with:
+          repository: PoomSaengPoomSa/POOM-BACK
+          token: ${{ secrets.GHCR_TOKEN }}
+          path: POOM-BACK
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
