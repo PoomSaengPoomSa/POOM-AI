@@ -161,10 +161,11 @@ def preprocess():
     df['next_week_avg_gold'] = pd.concat([df['gold'].shift(-i) for i in range(1, 6)], axis=1).mean(axis=1)
     # 다음 주 평균 가격이 오늘 가격보다 높은지 변동률 및 이진 분류 방향성 타겟 설정
     df['target_tomorrow_gold_change_rate'] = (df['next_week_avg_gold'] - df['gold']) / df['gold']
-    df['target_tomorrow_gold_direction'] = (df['target_tomorrow_gold_change_rate'] > 0).astype(int)
-
-    # Clean up NaNs due to shift, rolling, and lags
-    df = df.dropna().reset_index(drop=True)
+    df['target_tomorrow_gold_direction'] = np.where(
+        df['target_tomorrow_gold_change_rate'].isna(),
+        np.nan,
+        (df['target_tomorrow_gold_change_rate'] > 0).astype(float)
+    )
 
     # Group features
     base_features = [
@@ -174,6 +175,9 @@ def preprocess():
         'vix_change_rate', 'kospi200_change_rate', 'sp500_change_rate'
     ]
     features = base_features + new_derived_cols + lag_features + rolling_features
+
+    # Clean up NaNs due to shift, rolling, and lags (features only, keep NaN targets)
+    df = df.dropna(subset=features).reset_index(drop=True)
 
     print(f"   Engineered {len(features)} feature columns.")
 

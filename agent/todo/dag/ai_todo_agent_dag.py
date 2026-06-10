@@ -44,7 +44,7 @@ with DAG(
     run_ai_todo_agent = BashOperator(
         task_id="run_ai_todo_agent",
         bash_command=f"""
-        curl -X POST "{backend_url}/api/v1/ai-todo/run?u_id=pb_b1_1&date={{{{ logical_date.in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}}}"
+        curl -f -s -H "Content-Type: application/json" -X POST -d '{{"u_id": "pb_b1_1", "date": "{{{{ logical_date.in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}}}"}}' {backend_url}/api/v1/ai-todo/run
         """,
     )
 

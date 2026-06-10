@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 from graph.state import AgentState
 from graph.llm import get_llm
-from prompts.planner_prompt import PLANNER_SYSTEM_PROMPT, PLANNER_USER_PROMPT
+from prompts import PLANNER_SYSTEM_PROMPT, PLANNER_USER_PROMPT
 
 logger = logging.getLogger(__name__)
 

@@ -48,7 +48,7 @@ def GetCustomerRiskTool(u_id: str) -> str:
             grade = customer.grade if customer else "VIP"
             assets = f"{customer.total_assets / 100000000:.1f}억" if customer and customer.total_assets else "0원"
             output.append(
-                f"- **{name}** ({grade} 등급, 총자산: {assets}) - **위험도: [{r.grade}]**\n"
+                f"- **{name}** (c_id: {c_id}, {grade} 등급, 총자산: {assets}) - **위험도: [{r.grade}]**\n"
                 f"  * 이탈 우려 사유: {r.reason} (최근 분석일: {r.created_date.strftime('%Y-%m-%d')})"
             )
         return "\n".join(output)
@@ -78,7 +78,7 @@ def GetRecentConsultingHistoryTool(u_id: str, c_id: int = None) -> str:
             report_summary = f"\n  * 요약 리포트: {report.summary or report.key_contents}" if report else ""
 
             output.append(
-                f"- **{cust_name}** 고객 상담 ({m.consult_date.strftime('%Y-%m-%d')}): {m.memo}{report_summary}"
+                f"- **{cust_name}** (c_id: {m.c_id}) 고객 상담 ({m.consult_date.strftime('%Y-%m-%d')}): {m.memo}{report_summary}"
             )
         return "\n".join(output)
 
@@ -154,7 +154,7 @@ def GetCustomerEventTool(u_id: str, date_str: str) -> str:
                 cust = next((c for c in customers if c.c_id == cp.c_id), None)
                 cust_name = cust.name if cust else f"고객ID:{cp.c_id}"
                 output.append(
-                    f"- **{cust_name}** 고객: 보유 상품 **'{cp.product.name}'** 만기 예정 (**만기일: {cp.expiration_date.strftime('%Y-%m-%d')}**)"
+                    f"- **{cust_name}** (c_id: {cp.c_id}) 고객: 보유 상품 **'{cp.product.name}'** 만기 예정 (**만기일: {cp.expiration_date.strftime('%Y-%m-%d')}**)"
                 )
 
         if not events_found:

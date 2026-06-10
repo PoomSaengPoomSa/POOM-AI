@@ -29,7 +29,11 @@ def save_contributions_to_mysql(features, shap_values):
     import numpy as np
     
     # 1. Calculate absolute mean SHAP values for each feature
-    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    shap_values = np.array(shap_values)
+    if shap_values.ndim == 1:
+        mean_abs_shap = np.abs(shap_values)
+    else:
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
     
     # 2. Map to base variable names
     base_mapping = {
@@ -160,6 +164,13 @@ def explain_model(valid_mode=False):
 
     feature_names = joblib.load(os.path.join(models_dir, 'feature_names.pkl'))
 
+    # Load latest row for explanation (aligned with predict.py)
+    latest_row = df.iloc[-1:]
+    latest_date = latest_row['date_ym'].values[0]
+    X_latest = latest_row[feature_names].copy()
+    for col in X_latest.columns:
+        X_latest[col] = pd.to_numeric(X_latest[col], errors='coerce')
+
     if valid_mode:
         test_df  = df[df['date_ym'].between(cfg.VALID_START, cfg.VALID_END)].copy()
     else:
@@ -225,15 +236,39 @@ def explain_model(valid_mode=False):
     try:
         cat_model = classifier.named_estimators_['xgb']
     except KeyError:
-        raise ValueError("앙상블 모델 내에 'cat'이라는 이름의 CatBoost 모델이 존재하지 않습니다.")
+        raise ValueError("앙상블 모델 내에 'xgb'라는 이름의 XGBoost 모델이 존재하지 않습니다.")
 
     # 2. CatBoost 모델에 대한 TreeExplainer 생성 및 SHAP 값 도출
     explainer = shap.TreeExplainer(cat_model)
-    sv = explainer.shap_values(X_test)
     
-    # 3. 모델별 SHAP 반환 형태 통일 (하단 시각화 코드를 위해 리스트 형태로 변환)
-    # CatBoost의 다중 클래스 출력은 보통 (n_samples, n_features, n_classes) 형태의 3차원 배열입니다.
-    # SHAP 반환 형태를 클래별(인하, 동결, 인상) 리스트로 통일
+    # 2a. Compute SHAP for the latest row (XAI explanation target)
+    sv_latest = explainer.shap_values(X_latest)
+    if isinstance(sv_latest, np.ndarray) and sv_latest.ndim == 3:
+        shap_by_class_latest = [sv_latest[:, :, 0], sv_latest[:, :, 1], sv_latest[:, :, 2]]
+    elif isinstance(sv_latest, list) and len(sv_latest) == 3:
+        shap_by_class_latest = [sv_latest[0], sv_latest[1], sv_latest[2]]
+    else:
+        raise ValueError(f"예상치 못한 SHAP 값 형태입니다: {type(sv_latest)}")
+        
+    # Get predictions on X_latest to identify the target predicted class to explain
+    preds_latest = classifier.predict(X_latest)
+    pred_class_idx = int(preds_latest[0])
+    
+    # Feature importance specifically for X_latest predicted class
+    importance_df = pd.DataFrame({
+        'feature': X_latest.columns,
+        'feature_kr': [get_korean_name(c) for c in X_latest.columns],
+        'importance': np.abs(shap_by_class_latest[pred_class_idx][0]),
+        'importance_인하': np.abs(shap_by_class_latest[0][0]),
+        'importance_동결': np.abs(shap_by_class_latest[1][0]),
+        'importance_인상': np.abs(shap_by_class_latest[2][0]),
+    }).sort_values('importance', ascending=False)
+    
+    importance_df.to_csv(os.path.join(results_dir, 'feature_importance_classifier.csv'), index=False, encoding='utf-8-sig')
+    print(f"   [CSV] Saved feature importance CSV for latest prediction to: {os.path.join(results_dir, 'feature_importance_classifier.csv')}")
+
+    # 2b. Compute SHAP for the test set (for beeswarm, summary plot, beeswarm CSV, and misclassification)
+    sv = explainer.shap_values(X_test)
     if isinstance(sv, np.ndarray) and sv.ndim == 3:
         shap_by_class = [sv[:, :, 0], sv[:, :, 1], sv[:, :, 2]]
     elif isinstance(sv, list) and len(sv) == 3:
@@ -247,17 +282,6 @@ def explain_model(valid_mode=False):
     mean_abs_insang = np.abs(shap_by_class[2]).mean(axis=0)
     
     mean_abs = (mean_abs_inha + mean_abs_dong + mean_abs_insang) / 3
-
-    importance_df = pd.DataFrame({
-        'feature': X_test.columns,
-        'feature_kr': [get_korean_name(c) for c in X_test.columns],
-        'importance': mean_abs,
-        'importance_인하': mean_abs_inha,
-        'importance_동결': mean_abs_dong,
-        'importance_인상': mean_abs_insang,
-    }).sort_values('importance', ascending=False)
-    
-    misclass_records = []
 
     top_k = importance_df.head(k)
 
@@ -370,10 +394,42 @@ def explain_model(valid_mode=False):
 
 
 
-    importance_df.to_csv(os.path.join(results_dir, 'feature_importance_classifier.csv'), index=False, encoding='utf-8-sig')
+    # ── SHAP Waterfall Plot for the Latest Predicted Row ──
+    try:
+        actual_base_value = explainer.expected_value[pred_class_idx]
+        exp = shap.Explanation(
+            values=shap_by_class_latest[pred_class_idx][0],
+            base_values=actual_base_value,
+            data=X_latest.iloc[0].values,
+            feature_names=list(X_latest.columns)
+        )
+        
+        plt.figure(figsize=(10, 8))
+        shap.plots.waterfall(exp, max_display=10, show=False)
+        
+        fig = plt.gcf()
+        for ax_obj in fig.axes:
+            for text_obj in ax_obj.texts:
+                current_text = text_obj.get_text()
+                if '\u2212' in current_text:
+                    text_obj.set_text(current_text.replace('\u2212', '-'))
+            new_labels = []
+            for label in ax_obj.get_yticklabels():
+                new_labels.append(label.get_text().replace('\u2212', '-'))
+            ax_obj.set_yticklabels(new_labels)
+            
+        pred_class_name = class_names[pred_class_idx]
+        plt.title(f"최신 기준금리 예측 워터폴 분석 ({latest_date} | 예측: {pred_class_name})", fontsize=14, fontweight='bold')
+        
+        waterfall_path = os.path.join(results_dir, 'shap_waterfall_latest.png')
+        plt.savefig(waterfall_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"      [PLOT] 최신 워터폴 플롯 저장 완료: shap_waterfall_latest.png")
+    except Exception as e:
+        print(f"      [WARNING] 최신 워터폴 플롯 생성 중 오류 발생: {e}")
 
+    misclass_records = []
     # 3. 오분류 분석
-
     # ═══════════════════════════════════════════════
 
     print(f"\n{'='*55}")
@@ -511,8 +567,7 @@ def explain_model(valid_mode=False):
 
     # Save dynamic SHAP contributions to MySQL DB for real-time dashboard binding
     try:
-        mean_sv = np.mean(shap_by_class, axis=0)
-        save_contributions_to_mysql(X_test.columns.tolist(), mean_sv)
+        save_contributions_to_mysql(X_latest.columns.tolist(), shap_by_class_latest[pred_class_idx][0])
     except Exception as e:
         print(f"[Warning] Failed to save contributions to DB: {e}")
 

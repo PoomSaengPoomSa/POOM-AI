@@ -32,7 +32,11 @@ def save_contributions_to_mysql(features, shap_values):
     import numpy as np
     
     # 1. Calculate absolute mean SHAP values for each feature
-    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    shap_values = np.array(shap_values)
+    if shap_values.ndim == 1:
+        mean_abs_shap = np.abs(shap_values)
+    else:
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
     
     # 2. Map to base variable names
     base_mapping = {
@@ -176,6 +180,16 @@ def explain_model(valid_mode=False):
     cfg = GoldModel
 
     df['loaded_date'] = df['loaded_date'].astype(str).str.strip()
+    
+    # Load latest row for explanation (aligned with predict.py)
+    latest_row = df.iloc[-1:]
+    latest_date = latest_row['loaded_date'].values[0]
+    X_latest = latest_row[feature_names].copy()
+    
+    # Scale latest row
+    X_latest_scaled = scaler.transform(X_latest)
+    X_latest_scaled_df = pd.DataFrame(X_latest_scaled, columns=feature_names)
+
     if valid_mode:
         test_df = df[df['loaded_date'].between(cfg.VALID_START, cfg.VALID_END)].copy()
         eval_name = "Validation"
@@ -247,20 +261,26 @@ def explain_model(valid_mode=False):
         explainer = shap.TreeExplainer(base_xgb)
     else:
         explainer = shap.TreeExplainer(classifier)
-    shap_values = explainer.shap_values(X_test_scaled_df)
-
-    # 3. Global Importance Tabular Dumps
-    # SHAP returns a single array for binary classification (prob of class 1)
-    mean_abs_shap = np.abs(shap_values).mean(axis=0)
-
+    # 2a. Compute SHAP for the latest row (XAI explanation target)
+    sv_latest = explainer.shap_values(X_latest_scaled_df)
+    
+    # Get predictions on X_latest to identify target class to explain
+    preds_latest = classifier.predict(X_latest_scaled_df)
+    pred_label = '상승' if preds_latest[0] == 1 else '하락/보합'
+    
+    # Feature importance CSV specifically for the latest prediction row
     importance_df = pd.DataFrame({
-        'feature': X_test.columns,
-        'feature_kr': [get_korean_name(c) for c in X_test.columns],
-        'importance': mean_abs_shap
+        'feature': X_latest.columns,
+        'feature_kr': [get_korean_name(c) for c in X_latest.columns],
+        'importance': np.abs(sv_latest[0])
     }).sort_values('importance', ascending=False)
 
     importance_csv_path = os.path.join(results_dir, 'feature_importance_classifier.csv')
     importance_df.to_csv(importance_csv_path, index=False, encoding='utf-8-sig')
+    print(f"   [CSV] Saved feature importance CSV for latest prediction to: {importance_csv_path}")
+
+    # 2b. Compute SHAP for the test set (for beeswarm, global plots, beeswarm CSV, and misclassification)
+    shap_values = explainer.shap_values(X_test_scaled_df)
     print(f"   [CSV] Saved feature importance CSV to: {importance_csv_path}")
 
     # 4. Generate SHAP Plots
@@ -303,6 +323,36 @@ def explain_model(valid_mode=False):
     beeswarm_csv_path = os.path.join(results_dir, 'shap_beeswarm.csv')
     beeswarm_df.to_csv(beeswarm_csv_path, index=False, encoding='utf-8-sig')
     print(f"   [CSV] Saved Beeswarm summary CSV to: {beeswarm_csv_path}")
+
+    # ── SHAP Waterfall Plot for the Latest Predicted Row ──
+    try:
+        exp_latest = shap.Explanation(
+            values=sv_latest[0],
+            base_values=explainer.expected_value,
+            data=X_latest_scaled_df.iloc[0].values,
+            feature_names=X_latest.columns.tolist()
+        )
+        
+        plt.figure(figsize=(10, 8))
+        shap.plots.waterfall(exp_latest, max_display=10, show=False)
+        
+        fig = plt.gcf()
+        for ax_obj in fig.axes:
+            for text_obj in ax_obj.texts:
+                txt = text_obj.get_text()
+                if '\u2212' in txt:
+                    text_obj.set_text(txt.replace('\u2212', '-'))
+            new_lbls = [label.get_text().replace('\u2212', '-') for label in ax_obj.get_yticklabels()]
+            ax_obj.set_yticklabels(new_lbls)
+            
+        plt.tight_layout()
+        waterfall_latest_path = os.path.join(results_dir, 'gold_shap_waterfall_latest.png')
+        plt.title(f"최신 금값 예측 워터폴 분석 ({latest_date} | 예측: {pred_label})", fontsize=13, fontweight='bold', pad=15)
+        plt.savefig(waterfall_latest_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"   [PLOT] Saved latest prediction waterfall plot to: {waterfall_latest_path}")
+    except Exception as e:
+        print(f"   [WARNING] Latest prediction waterfall plot failed: {e}")
 
     # 5. Misclassification Waterfall Analysis
     preds_test = classifier.predict(X_test_scaled_df)
@@ -395,7 +445,7 @@ def explain_model(valid_mode=False):
 
     # Save dynamic SHAP contributions to MySQL DB for real-time dashboard binding
     try:
-        save_contributions_to_mysql(X_test.columns.tolist(), shap_values)
+        save_contributions_to_mysql(X_latest.columns.tolist(), sv_latest[0])
     except Exception as e:
         print(f"[Warning] Failed to save contributions to DB: {e}")
 

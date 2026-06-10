@@ -1,5 +1,9 @@
 import subprocess
 import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', errors='replace')
+
 import os
 
 def run_script(script_name, forward_args=[]):
@@ -56,6 +60,7 @@ def main():
         'utils/get_data.py',
         'utils/preprocess.py',
         'train.py',
+        'predict.py',
         'test.py',
         'explain.py',
         'interpret_xai.py'

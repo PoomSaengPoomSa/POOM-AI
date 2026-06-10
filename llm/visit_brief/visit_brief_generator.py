@@ -199,9 +199,15 @@ def generate_briefing_via_llm(customer_info: dict) -> str:
     else:
         history_fallback_text = "\n- 이전 상담 이력 없음"
 
+    exp_summary_str = ""
+    if customer_info.get('expiring_soon'):
+        exp_prods_str = ", ".join(customer_info['expiring_soon'])
+        exp_summary_str = f" 특히 {exp_prods_str} 상품의 만기가 임박해 있으니,"
+    else:
+        exp_summary_str = ""
+
     fallback_content = f"""[Quick Summary]
-최근 총 자산 변동성이 확인된 {customer_info['tendency']} 성향의 고객입니다. 
-당일 예정된 방문 일정에서는 만기 자금의 타행 유출 방어를 위한 정기 특판 재가입 및 맞춤형 포트폴리오 리밸런싱 상담을 집중 지원하십시오.
+최근 총 자산 변동성이 확인된 {customer_info['tendency']} 성향의 고객입니다.{exp_summary_str} 당일 예정된 방문 일정에서는 만기 자금의 타행 유출 방어를 위한 정기 특판 재가입 및 맞춤형 포트폴리오 리밸런싱 상담을 집중 지원하십시오.
 
 [고객 정보 & Preference]
 - 고객명/등급: {customer_info['name']} 고객 ({customer_info['tendency']} 성향)
@@ -357,24 +363,17 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
             for cp in expiring_products:
                 c = cp.customer
                 p = cp.product
-                if c:
+                if c and p:
+                    # 해당 상품의 만기일 기준 30일 이내에 이미 만기 알림이 생성되었는지 확인 (매일 중복 알림 생성 방지)
                     dup = db.query(Notification).filter(
                         Notification.u_id == u_id,
                         Notification.category == "만기 알림",
-                        Notification.title.like(f"%{c.name}%만기%"),
-                        Notification.created_time >= start_of_today,
-                        Notification.created_time <= end_of_today
+                        Notification.c_id == c.c_id,
+                        Notification.title.like(f"%{p.name}%"),
+                        Notification.created_time >= datetime.combine(target_date - timedelta(days=30), datetime.min.time())
                     ).first()
                     
                     if not dup:
-                        # 해당 고객의 동일한 만기 상품에 대한 이전 알림(D-3, D-4 등) 삭제하지 않고 누적해서 유지
-                        # db.query(Notification).filter(
-                        #     Notification.u_id == u_id,
-                        #     Notification.category == "만기 알림",
-                        #     Notification.title.like(f"%{c.name}%{p.name}%만기%")
-                        # ).delete(synchronize_session=False)
-
-
                         remaining_days = (cp.expiration_date - target_date).days
                         d_day_str = f"D-{remaining_days}" if remaining_days > 0 else "금일 만기"
                         new_noti = Notification(
@@ -398,13 +397,16 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                 ChurnLevel.created_date <= end_of_today
             ).all()
             
+            processed_churn_customer_ids = set()
             for ch in danger_churns:
                 c = ch.customer
-                if c:
+                if c and c.c_id not in processed_churn_customer_ids:
+                    processed_churn_customer_ids.add(c.c_id)
                     dup = db.query(Notification).filter(
                         Notification.u_id == u_id,
                         Notification.category == "이탈 위험",
-                        Notification.title.like(f"%{c.name}%이탈%"),
+                        Notification.c_id == c.c_id,
+                        Notification.title.like(f"%{c.name}%"),
                         Notification.created_time >= start_of_today,
                         Notification.created_time <= end_of_today
                     ).first()
@@ -423,40 +425,55 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                         logger.info(f"[이탈 위험 알림 추가] {c.name} 고객 이탈 등급 위험")
 
         # 1-4. 최근 7일 내 타행 거액(1,000만원 이상) 출금 거래 등록 후 알림 생성 (거액 거래 탐지)
+        # 타행은 "우리은행"이 아닌 경우로 설정
         start_of_7days_ago = datetime.combine(target_date - timedelta(days=7), datetime.min.time())
         if pb_customer_ids:
             large_withdrawals = db.query(CustomerTransaction).filter(
                 CustomerTransaction.c_id.in_(pb_customer_ids),
                 CustomerTransaction.ct_type == 'W',
                 CustomerTransaction.amount >= 10000000,
-                CustomerTransaction.opp_bank_name != "당행",
+                CustomerTransaction.opp_bank_name != "우리은행",
                 CustomerTransaction.ct_datetime >= start_of_7days_ago,
                 CustomerTransaction.ct_datetime <= end_of_today
             ).all()
             
+            # 고객(c_id)별로 거래 그룹화
+            from collections import defaultdict
+            withdrawals_by_customer = defaultdict(list)
             for tx in large_withdrawals:
-                c = tx.customer
+                withdrawals_by_customer[tx.c_id].append(tx)
+                
+            for c_id, tx_list in withdrawals_by_customer.items():
+                # 해당 고객의 최신 거래 시간 기준으로 알림 여부 판단
+                max_tx_datetime = max(tx.ct_datetime for tx in tx_list)
+                c = tx_list[0].customer
                 if c:
+                    # 해당 고객의 이 거래 내역들(가장 최근 거래 기준)에 대해 이미 알림을 생성했는지 체크
+                    # max_tx_datetime 10초 전 이후에 생성된 동일 알림이 있다면 이미 알림 완료된 거래로 취급
                     dup = db.query(Notification).filter(
                         Notification.u_id == u_id,
                         Notification.category == "거액 거래 탐지",
-                        Notification.title.like(f"%{c.name}%거액 출금%"),
-                        Notification.created_time >= start_of_today,
-                        Notification.created_time <= end_of_today
+                        Notification.c_id == c_id,
+                        Notification.created_time >= max_tx_datetime - timedelta(seconds=10)
                     ).first()
                     
                     if not dup:
+                        total_amount = sum(tx.amount for tx in tx_list)
+                        count = len(tx_list)
+                        opp_banks = list(set(tx.opp_bank_name for tx in tx_list))
+                        opp_banks_str = ", ".join(opp_banks)
+                        
                         new_noti = Notification(
                             created_time=datetime.combine(target_date, kst_time),
                             title=f"{c.name} 고객 타행 거액 출금 감지",
-                            content=f"{c.name} 고객님이 최근 7일 내 타행({tx.opp_bank_name})으로 거액 출금({int(tx.amount):,}원) 거래를 발생시켰습니다. 타행 자산 이탈 여부 확인을 위한 선제적 관리가 필요합니다.",
+                            content=f"{c.name} 고객님이 최근 7일 내 타행({opp_banks_str})으로 거액 출금(총 {count}건, {int(total_amount):,}원) 거래를 발생시켰습니다. 타행 자산 이탈 여부 확인을 위한 선제적 관리가 필요합니다.",
                             category="거액 거래 탐지",
                             state_us="미확인",
                             u_id=u_id,
                             c_id=c.c_id
                         )
                         db.add(new_noti)
-                        logger.info(f"[거액 거래 알림 추가] {c.name} 고객 - {int(tx.amount):,}원 출금")
+                        logger.info(f"[거액 거래 알림 추가] {c.name} 고객 - 총 {count}건, {int(total_amount):,}원 출금")
 
         # ---------------------------------------------------------
         # 트랙 2: 확정 상담 일정 기반 실시간 LLM '방문 예정 브리핑' 생성
@@ -505,7 +522,20 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                 prods = db.query(CustomerProduct).filter(
                     CustomerProduct.c_id == c.c_id
                 ).all()
-                prods_list = [f"{cp.product.name} (만기: {cp.expiration_date.strftime('%Y-%m-%d') if cp.expiration_date else '없음'})" for cp in prods if cp.product]
+                
+                prods_list = []
+                expiring_soon_list = []
+                for cp in prods:
+                    if cp.product:
+                        exp_date_str = cp.expiration_date.strftime('%Y-%m-%d') if cp.expiration_date else '없음'
+                        if cp.expiration_date:
+                            days_to_exp = (cp.expiration_date - target_date).days
+                            if 0 <= days_to_exp <= 7:
+                                d_day_str = f"D-{days_to_exp}" if days_to_exp > 0 else "금일 만기"
+                                prods_list.append(f"[★만기임박! {d_day_str}] {cp.product.name} (만기: {exp_date_str})")
+                                expiring_soon_list.append(f"{cp.product.name} ({d_day_str})")
+                                continue
+                        prods_list.append(f"{cp.product.name} (만기: {exp_date_str})")
                 
                 # C. 최신 이탈 등급 조회
                 churn = db.query(ChurnLevel).filter(
@@ -557,6 +587,7 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
                     "pension": c.pension,
                     "loan": c.loan,
                     "products": prods_list if prods_list else ["보유 중인 만기성 상품 없음"],
+                    "expiring_soon": expiring_soon_list,
                     "churn_grade": churn_grade,
                     "churn_reason": churn_reason,
                     "transactions": txs_list if txs_list else ["최근 5건 거래 내역 없음"],
@@ -595,12 +626,21 @@ def run_notification_generator(u_id: str, date_str: str, db=None):
 if __name__ == "__main__":
     # 단위 테스트 코드 지원
     import argparse
+    import logging
     from datetime import timezone, timedelta
+    
+    # 단위 테스트용 콘솔 로깅 활성화
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    
     kst_tz = timezone(timedelta(hours=9))
     default_date = datetime.now(kst_tz).strftime("%Y-%m-%d")
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--u_id", type=str, default="user1")
+    parser.add_argument("--u_id", type=str, default="pb_b1_1")
     parser.add_argument("--date", type=str, default=default_date)
     args = parser.parse_args()
     

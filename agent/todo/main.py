@@ -81,7 +81,7 @@ def run_agent_for_pb(u_id: str, date_str: str):
 
     try:
         logger.info("[RUN] LangGraph State Machine 시작...")
-        final_state = agent.invoke(initial_state)
+        final_state = agent.invoke(initial_state, config={"run_name": "AI_ToDo-Agent"})
         
         # 결과 리포트 출력
         logger.info("==================================================================")

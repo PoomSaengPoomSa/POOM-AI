@@ -62,7 +62,7 @@ class MainAgent:
         self.sub2 = ChurnRiskAgent(model_name=model_name)
         self.sub3 = ProductMatchingAgent(model_name=model_name)
 
-    @traceable(name="MainAgent.run_for_customer", run_type="chain", tags=["MainAgent"])
+    @traceable(name="CustomerMain-Agent", run_type="chain", tags=["MainAgent"])
     def run_for_customer(self, customer_id: int, selection_reasons: List[str] = None, force_sub1: bool = False, force_sub2: bool = False, force_sub3: bool = False) -> dict:
         """
         특정 고객 ID에 대해 dynamic routing을 판단하여 선택적으로 서브 에이전트를 호출합니다.
@@ -211,7 +211,7 @@ class MainAgent:
 
         return results
 
-    @traceable(name="MainAgent.run_batch", run_type="chain", tags=["MainAgent"])
+    @traceable(name="CustomerMain-Agent", run_type="chain", tags=["MainAgent"])
     def run_batch(self, specified_c_ids: list = None, u_id: str = None, force_sub1: bool = False, force_sub2: bool = False, force_sub3: bool = False):
         """
         Orchestrate batch customer analysis (looping, targeting, and summary reporting).

@@ -9,50 +9,7 @@ import pandas as pd
 from dotenv import load_dotenv, find_dotenv
 from model import RealEstateEnsembleRegressor
 
-def save_prediction_to_mysql(predicted_value, predicted_index, run_id):
-    import pymysql
-    load_dotenv(find_dotenv())
-    DB_USER = os.getenv('DB_USER')
-    DB_PASSWORD = os.getenv('DB_PASSWORD')
-    DB_HOST = os.getenv('DB_HOST')
-    DB_PORT = os.getenv('DB_PORT')
-    DB_NAME = os.getenv('DB_NAME')
-    
-    if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
-        print("[Warning] Missing DB config. Skipping prediction save.")
-        return
-        
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=int(DB_PORT),
-            charset='utf8mb4'
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS realestate_predictions (
-                    run_id VARCHAR(50) NOT NULL,
-                    predicted_value DOUBLE NOT NULL,
-                    predicted_index DOUBLE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                
-                sql = """
-                INSERT INTO realestate_predictions (run_id, predicted_value, predicted_index)
-                VALUES (%s, %s, %s)
-                """
-                cursor.execute(sql, (run_id, predicted_value, predicted_index))
-            connection.commit()
-            print("[DB] Successfully saved realestate_predictions (1 row) into MySQL.")
-        finally:
-            connection.close()
-    except Exception as e:
-        print(f"[Error] Failed to save realestate predictions to MySQL: {e}")
+
 
 
 
@@ -321,20 +278,7 @@ def run_train(valid_mode=False):
         print(f"   [Train]  R2: {train_r2:.4f} | MAE: {train_mae:.4f}% | RMSE: {train_rmse:.4f}")
         print(f"   [{eval_name} ]  R2: {test_r2:.4f} | MAE: {test_mae:.4f}% | RMSE: {test_rmse:.4f}")
         print("=" * 55 + "\n")
- 
-        # 최신 피처 값을 사용하여 예측함
-        X_latest = df[selected_features].iloc[[-1]]
-        latest_predicted_value = float(ensemble.predict(X_latest.values)[0])
-        
-        # 이번달 실제 가격지수 조회 및 실질 예측 지수 환산
-        re_today = get_latest_actual_realestate_index()
-        if re_today is not None:
-            predicted_index = re_today * (1 + latest_predicted_value / 100)
-            print(f"[Our Model] Calculated predicted_index: {predicted_index:.4f} using re_today: {re_today} and predicted_value: {latest_predicted_value}%")
-        else:
-            predicted_index = None
-            print("[Warning] Could not calculate predicted_index because re_today is missing.")
-            
+
         import uuid
         try:
             active_run = mlflow.active_run()
@@ -344,7 +288,6 @@ def run_train(valid_mode=False):
  
         # 테스트셋 성능을 DB에 저장
         save_performance_to_mysql(rmse=test_rmse, r2_score=test_r2, mae=test_mae, mse=test_mse, run_id=run_id_val)
-        save_prediction_to_mysql(predicted_value=latest_predicted_value, predicted_index=predicted_index, run_id=run_id_val)
  
         # Setup directories and save model
         model_path = os.path.join(models_dir, 'ensemble_model.pkl')

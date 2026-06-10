@@ -67,7 +67,6 @@ class IntentRoute(BaseModel):
 class SubQuery(BaseModel):
     query: str = Field(description="RAG 검색을 위해 구체적으로 분할 및 구체화된 검색 키워드 쿼리")
     asset_category: str = Field(description="이 쿼리가 타겟팅하는 금융 분야. '세무', '매크로', '금융상품', '컴플라이언스', '공통' 중 하나")
-    target_segment: str = Field(description="이 쿼리가 타겟팅하는 고객 세그먼트. '시니어', '영리치', '기업인', '전문직', '공통' 중 하나")
     
 class QueryDecomposition(BaseModel):
     sub_queries: List[SubQuery] = Field(description="원본 질문을 분할한 1~3개의 RAG 검색 쿼리 리스트")
@@ -257,17 +256,25 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
         import re
         rag_chunks = []
         seen_chunks = set()
+        has_valid_rag_query = False # RAG 대상 검색이 가동되었는지 확인하는 플래그
         
         for idx, sq in enumerate(decomposition.sub_queries, 1):
-            sys.stderr.write(f"  - 서브 쿼리 {idx}: '{sq.query}' | 카테고리: {sq.asset_category} | 세그먼트: {sq.target_segment}\n")
+            sys.stderr.write(f"  - 서브 쿼리 {idx}: '{sq.query}' | 카테고리: {sq.asset_category}\n")
+            
+            # [최적화] '금융상품'은 RAG 문서가 없고 MySQL DB에서 실시간으로 스펙 정보를 가져오므로
+            # 무의미한 RAG 검색 및 Tavily 웹 검색 Fallback을 사전에 건너뜁니다.
+            if sq.asset_category == "금융상품":
+                sys.stderr.write(f"  - [Skip] '금융상품' 카테고리는 RAG 검색을 건너뛰고 실시간 MySQL 상품 DB 데이터로 대체합니다.\n")
+                continue
+                
+            has_valid_rag_query = True
             
             # Query vector database with native filters
             rag_res = query_knowledge_base(
                 question=sq.query,
                 chroma_db_dir=chroma_db_dir,
                 threshold=THRESHOLD,
-                asset_category=sq.asset_category,
-                target_segment=sq.target_segment
+                asset_category=sq.asset_category
             )
             
             if rag_res:
@@ -276,7 +283,6 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
                     chunk = chunk.strip()
                     if chunk:
                         # Deduplicate by document content to avoid identical chunks from multiple queries
-                        # We normalize whitespace for robust deduplication key
                         norm_chunk = re.sub(r'\s+', ' ', chunk)
                         if norm_chunk not in seen_chunks:
                             seen_chunks.add(norm_chunk)
@@ -290,8 +296,8 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
                 cleaned_chunk = re.sub(r'^\[\d+\]', f"[{c_idx}]", chunk)
                 formatted_chunks.append(cleaned_chunk)
             retrieved_knowledge_parts.append("\n\n".join(formatted_chunks))
-        else:
-            # Fallback to Tavily with the first decomposed query or the original query if RAG results are empty
+        elif has_valid_rag_query:
+            # RAG 탐색 대상이 있었음에도 임계값 만족 청크가 없을 때만 Tavily Fallback 가동
             fallback_query = decomposition.sub_queries[0].query if decomposition.sub_queries else question
             sys.stderr.write(f"[RAG->Tavily] 임계값({THRESHOLD}) 만족 지식 없음. Tavily 웹 검색 실행 (쿼리: '{fallback_query}')\n")
             web_search = fetch_from_tavily(fallback_query)
@@ -327,7 +333,7 @@ def knowledge_node(state: SimulatorState) -> Dict[str, Any]:
     # 5. Retrieve customer's features in the last 1 month from MySQL
     recent_features_str = ""
     try:
-        from agent.customer.tools import get_customer_features
+        from agent.feature.tools import get_customer_features
         features = get_customer_features(customer_id, months=1)
         
         if not features:
@@ -518,7 +524,7 @@ class SimulatorAgent:
         
         final_state = self.app.invoke(
             initial_state,
-            config={"run_name": "SimulatorAgent", "tags": ["simulator_agent"]}
+            config={"run_name": "Simulator-Agent", "tags": ["simulator_agent"]}
         )
         
         if final_state.get("errors"):

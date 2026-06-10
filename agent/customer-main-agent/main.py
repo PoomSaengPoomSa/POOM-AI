@@ -22,7 +22,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--c_id", 
         type=str, 
-        help="수동 분석을 수행할 특정 고객 ID 목록 (예: 1001,1002)"
+        help="수동 분석을 수행할 특정 고객 ID 목록 (예: 1,2)"
     )
     parser.add_argument(
         "--u_id",

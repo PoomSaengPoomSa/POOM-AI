@@ -111,6 +111,8 @@ overrides==7.7.0
 packaging==26.2
 pandas==2.3.3
 patsy==1.0.2
+pdfminer.six==20251230
+pdfplumber==0.11.9
 pillow==12.2.0
 platformdirs==4.10.0
 plotly==6.7.0
@@ -132,6 +134,7 @@ PyJWT==2.13.0
 PyMySQL==1.2.0
 pyparsing==3.3.2
 pypdf==6.12.2
+pypdfium2==5.9.0
 PyPika==0.51.1
 pyproject_hooks==1.2.0
 python-dateutil==2.9.0.post0

@@ -251,11 +251,18 @@ def test_model(valid_mode=False):
     correct_count = (y_all[eval_mask].values == preds[eval_mask]).sum()
     total_count = eval_mask.sum()
     
+    # Robustly find keys to avoid KeyError
+    key_1 = next((k for k in report if k in [1, 1.0, '1', '1.0', '상승']), None)
+    key_0 = next((k for k in report if k in [0, 0.0, '0', '0.0', '하락/보합']), None)
+    
+    f1_1 = report[key_1]['f1-score'] if key_1 is not None else 0.0
+    f1_0 = report[key_0]['f1-score'] if key_0 is not None else 0.0
+    
     info_lines = [
         (f'최종 {eval_name} 정확도', f"{eval_acc*100:.2f}%"),
         ('', ''),
-        ('상승(1) F1-Score', f"{report['1']['f1-score']:.4f}"),
-        ('하락(0) F1-Score', f"{report['0']['f1-score']:.4f}"),
+        ('상승(1) F1-Score', f"{f1_1:.4f}"),
+        ('하락(0) F1-Score', f"{f1_0:.4f}"),
         ('Macro F1-Score', f"{eval_f1_macro:.4f}"),
         (f'{eval_name} AUC-ROC 스코어', f"{eval_auc:.4f}" if not np.isnan(eval_auc) else 'N/A'),
         ('', ''),

@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 from graph.state import AgentState
 from graph.llm import get_llm
-from prompts.goal_prompt import GOAL_SELECTOR_SYSTEM_PROMPT, GOAL_SELECTOR_USER_PROMPT
+from prompts import GOAL_SELECTOR_SYSTEM_PROMPT, GOAL_SELECTOR_USER_PROMPT
 
 logger = logging.getLogger(__name__)
 

@@ -67,6 +67,7 @@ def main():
         'utils/get_data.py',
         'utils/preprocess.py',
         'train.py',
+        'predict.py',
         'test.py',
         'explain.py',
         'interpret_xai.py'

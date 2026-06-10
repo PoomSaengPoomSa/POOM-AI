@@ -1,24 +1,26 @@
 name: Deploy POOM-AI
-
 on:
   push:
     branches:
       - main
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout POOM-AI
         uses: actions/checkout@v4
-
+      - name: Checkout POOM-BACK
+        uses: actions/checkout@v4
+        with:
+          repository: PoomSaengPoomSa/POOM-BACK
+          token: ${{ secrets.GHCR_TOKEN }}
+          path: POOM-BACK
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN }}
-
       - name: Build and push image
         uses: docker/build-push-action@v5
         with:
@@ -30,16 +32,85 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - name: Deploy to APP server
+      - name: Deploy to AI server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.APP_SERVER_HOST }}
+          host: ${{ secrets.AI_SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           proxy_host: ${{ secrets.BASTION_HOST }}
           proxy_username: ${{ secrets.SERVER_USER }}
           proxy_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: GHCR_TOKEN,OPENAI_API_KEY,LANGSMITH_API_KEY,LANGSMITH_TRACING,LANGSMITH_ENDPOINT,LANGSMITH_PROJECT,TAVILY_API_KEY,ECOS_API_KEY,FRED_API_KEY,REB_API_KEY,DB_USER,DB_PASSWORD,DB_HOST,DB_PORT,DB_NAME,MLFLOW_TRACKING_URI,WANDB_API_KEY,ES_HOST,LOGSTASH_HOST,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_DEFAULT_REGION,S3_BUCKET_NAME,MLFLOW_ARTIFACTS_BUCKET,MLFLOW_DATABASE_URI
           script: |
-            cd /opt/app
-            docker compose --env-file .env pull ai
-            docker compose --env-file .env up -d ai
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u poomsaengpoomsa --password-stdin
+            docker pull ghcr.io/poomsaengpoomsa/poom-ai:latest
+            docker stop poom-ai || true
+            docker rm poom-ai || true
+            docker run -d \
+              --name poom-ai \
+              --restart unless-stopped \
+              -p 8001:8001 \
+              -v /opt/app/data:/app/data \
+              -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+              -e LANGSMITH_API_KEY="$LANGSMITH_API_KEY" \
+              -e LANGSMITH_TRACING="$LANGSMITH_TRACING" \
+              -e LANGSMITH_ENDPOINT="$LANGSMITH_ENDPOINT" \
+              -e LANGSMITH_PROJECT="$LANGSMITH_PROJECT" \
+              -e TAVILY_API_KEY="$TAVILY_API_KEY" \
+              -e ECOS_API_KEY="$ECOS_API_KEY" \
+              -e FRED_API_KEY="$FRED_API_KEY" \
+              -e REB_API_KEY="$REB_API_KEY" \
+              -e DB_USER="$DB_USER" \
+              -e DB_PASSWORD="$DB_PASSWORD" \
+              -e DB_HOST="$DB_HOST" \
+              -e DB_PORT="$DB_PORT" \
+              -e DB_NAME="$DB_NAME" \
+              -e MLFLOW_TRACKING_URI="$MLFLOW_TRACKING_URI" \
+              -e MLFLOW_ARTIFACTS_BUCKET="$MLFLOW_ARTIFACTS_BUCKET" \
+              -e MLFLOW_DATABASE_URI="$MLFLOW_DATABASE_URI" \
+              -e WANDB_API_KEY="$WANDB_API_KEY" \
+              -e ES_HOST="$ES_HOST" \
+              -e LOGSTASH_HOST="$LOGSTASH_HOST" \
+              -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+              -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+              -e AWS_DEFAULT_REGION="$AWS_DEFAULT_REGION" \
+              -e S3_BUCKET_NAME="$S3_BUCKET_NAME" \
+              ghcr.io/poomsaengpoomsa/poom-ai:latest
+
+            # ingest.py 최초 1회만 실행 (플래그 파일로 중복 실행 방지)
+            if [ ! -f /opt/app/data/.ingest_done ]; then
+              echo ">>> 최초 배포: ingest.py 실행 중..."
+              docker exec poom-ai python agent/simulator/utils/ingest.py
+              mkdir -p /opt/app/data
+              touch /opt/app/data/.ingest_done
+              echo ">>> ingest.py 완료"
+            else
+              echo ">>> ingest.py 이미 실행됨, 건너뜀"
+            fi
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_TRACING: ${{ secrets.LANGSMITH_TRACING }}
+          LANGSMITH_ENDPOINT: ${{ secrets.LANGSMITH_ENDPOINT }}
+          LANGSMITH_PROJECT: ${{ secrets.LANGSMITH_PROJECT }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          REB_API_KEY: ${{ secrets.REB_API_KEY }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_ARTIFACTS_BUCKET: ${{ secrets.MLFLOW_ARTIFACTS_BUCKET }}
+          MLFLOW_DATABASE_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          ES_HOST: ${{ secrets.ES_HOST }}
+          LOGSTASH_HOST: ${{ secrets.LOGSTASH_HOST }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}

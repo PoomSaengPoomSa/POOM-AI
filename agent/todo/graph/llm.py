@@ -91,7 +91,7 @@ class HeuristicFallbackLLM:
             
             # 사용자 프롬프트에서 유효한 c_ids 리스트 파싱 시도
             import re
-            c_ids = [1001]
+            c_ids = [1]
             match = re.search(r"리스트:\s*\[(.*?)\]", user_content)
             if match:
                 try:
@@ -99,7 +99,7 @@ class HeuristicFallbackLLM:
                 except Exception:
                     pass
             if not c_ids:
-                c_ids = [1001]
+                c_ids = [1]
             
             p_id = c_ids[0]
             s_id = c_ids[1] if len(c_ids) > 1 else p_id
