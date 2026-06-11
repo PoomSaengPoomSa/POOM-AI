@@ -20,7 +20,7 @@ COPY ml/ ./ml/
 COPY sql/ ./sql/
 COPY llm/ ./llm/
 COPY app/ ./app/
-COPY POOM-BACK/app /POOM-BACK/app
+COPY POOM-BACK/app /./app
  
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
