@@ -134,7 +134,7 @@ def run_customer_main(req: CustomerMainRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/v1/debug/paths")
+@app.get("/api/v1/ai-todo/debug/paths")
 def debug_paths():
     import os
     import sys
