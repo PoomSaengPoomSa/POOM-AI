@@ -12,7 +12,8 @@ if POOM_AI_DIR not in sys.path:
 # AI 모듈이 백엔드의 DB 모델 및 app 모듈을 참조하기 위한 임포트 경로 매핑
 current_dir = os.path.dirname(os.path.abspath(__file__))
 possible_paths = [
-    "/POOM-BACK",                                                   # Docker POOM-BACK
+    "/POOM_BACK",                                                   # Docker POOM_BACK (underscore)
+    "/POOM-BACK",                                                   # Docker POOM-BACK (dash)
     os.path.abspath(os.path.join(current_dir, "..", "..", "POOM-BACK")), # Windows local
     os.path.abspath(os.path.join(current_dir, "..", "..", "back")),      # Windows local backup
     os.path.abspath(os.path.join(current_dir, "..", "..")),              # Docker poom root

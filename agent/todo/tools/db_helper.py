@@ -5,6 +5,8 @@ from contextlib import contextmanager
 # 백엔드 패키지 경로를 sys.path에 동적으로 추가하여 app.database 및 app.models를 재사용합니다. (윈도우 back 및 Docker poom 루트 동적 실존 검증 매핑 지원)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 possible_paths = [
+    "/POOM_BACK",                                                   # Docker POOM_BACK
+    "/POOM-BACK",                                                   # Docker POOM-BACK
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..")), # Docker poom 루트
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "POOM-BACK")), # Docker POOM-BACK
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "..", "back")), # 윈도우 로컬

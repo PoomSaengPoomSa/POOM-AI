@@ -7,6 +7,8 @@ from datetime import datetime
 # sys.path 세팅 및 백엔드 연동 (윈도우 back 및 Docker poom 루트 동적 실존 검증 매핑 지원)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 possible_paths = [
+    "/POOM_BACK",                                                   # Docker POOM_BACK
+    "/POOM-BACK",                                                   # Docker POOM-BACK
     os.path.abspath(os.path.join(current_dir, "..", "..", "..")), # Docker poom 루트
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "POOM-BACK")), # Docker POOM-BACK
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "back")), # 윈도우 로컬

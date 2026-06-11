@@ -9,6 +9,8 @@ from apscheduler.triggers.cron import CronTrigger
 # DB 헬퍼 및 그래프 로더 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
 possible_paths = [
+    "/POOM_BACK",                                                   # Docker POOM_BACK
+    "/POOM-BACK",                                                   # Docker POOM-BACK
     os.path.abspath(os.path.join(current_dir, "..", "..", "..")), # Docker poom 루트
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "POOM-BACK")), # Docker POOM-BACK
     os.path.abspath(os.path.join(current_dir, "..", "..", "..", "back")), # 윈도우 로컬
