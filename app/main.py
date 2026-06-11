@@ -10,7 +10,22 @@ if POOM_AI_DIR not in sys.path:
     sys.path.insert(0, POOM_AI_DIR)
 
 # AI 모듈이 백엔드의 DB 모델 및 app 모듈을 참조하기 위한 임포트 경로 매핑
-POOM_BACK_DIR = "/POOM-BACK"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+possible_paths = [
+    "/POOM-BACK",                                                   # Docker POOM-BACK
+    os.path.abspath(os.path.join(current_dir, "..", "..", "POOM-BACK")), # Windows local
+    os.path.abspath(os.path.join(current_dir, "..", "..", "back")),      # Windows local backup
+    os.path.abspath(os.path.join(current_dir, "..", "..")),              # Docker poom root
+]
+POOM_BACK_DIR = None
+for p in possible_paths:
+    if os.path.exists(os.path.join(p, "app", "database.py")):
+        POOM_BACK_DIR = p
+        break
+
+if not POOM_BACK_DIR:
+    POOM_BACK_DIR = "/POOM-BACK"  # Fallback
+
 if os.path.exists(POOM_BACK_DIR):
     if POOM_BACK_DIR not in sys.path:
         sys.path.insert(0, POOM_BACK_DIR)
@@ -139,12 +154,12 @@ def debug_paths():
     import os
     import sys
     try:
-        poom_back_exists = os.path.exists("/POOM-BACK")
-        poom_back_app_exists = os.path.exists("/POOM-BACK/app")
-        database_file_exists = os.path.exists("/POOM-BACK/app/database.py")
+        poom_back_exists = os.path.exists(POOM_BACK_DIR)
+        poom_back_app_exists = os.path.exists(os.path.join(POOM_BACK_DIR, "app"))
+        database_file_exists = os.path.exists(os.path.join(POOM_BACK_DIR, "app", "database.py"))
         root_dir_contents = os.listdir("/") if os.path.exists("/") else []
         app_dir_contents = os.listdir("/app") if os.path.exists("/app") else []
-        poom_back_contents = os.listdir("/POOM-BACK") if os.path.exists("/POOM-BACK") else []
+        poom_back_contents = os.listdir(POOM_BACK_DIR) if os.path.exists(POOM_BACK_DIR) else []
         
         # Test imports
         import_database_success = False
@@ -156,6 +171,7 @@ def debug_paths():
             import_error = str(e)
             
         return {
+            "poom_back_dir_used": POOM_BACK_DIR,
             "poom_back_exists": poom_back_exists,
             "poom_back_app_exists": poom_back_app_exists,
             "database_file_exists": database_file_exists,
