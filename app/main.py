@@ -133,3 +133,38 @@ def run_customer_main(req: CustomerMainRequest):
         return {"status": "success", "message": f"Customer Main Agent batch analysis completed for PB {req.u_id}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/debug/paths")
+def debug_paths():
+    import os
+    import sys
+    try:
+        poom_back_exists = os.path.exists("/POOM-BACK")
+        poom_back_app_exists = os.path.exists("/POOM-BACK/app")
+        database_file_exists = os.path.exists("/POOM-BACK/app/database.py")
+        root_dir_contents = os.listdir("/") if os.path.exists("/") else []
+        app_dir_contents = os.listdir("/app") if os.path.exists("/app") else []
+        poom_back_contents = os.listdir("/POOM-BACK") if os.path.exists("/POOM-BACK") else []
+        
+        # Test imports
+        import_database_success = False
+        import_error = None
+        try:
+            from app.database import SessionLocal
+            import_database_success = True
+        except Exception as e:
+            import_error = str(e)
+            
+        return {
+            "poom_back_exists": poom_back_exists,
+            "poom_back_app_exists": poom_back_app_exists,
+            "database_file_exists": database_file_exists,
+            "sys_path": sys.path,
+            "root_dir_contents": root_dir_contents,
+            "app_dir_contents": app_dir_contents,
+            "poom_back_contents": poom_back_contents,
+            "import_database_success": import_database_success,
+            "import_error": import_error
+        }
+    except Exception as e:
+        return {"error": str(e)}
