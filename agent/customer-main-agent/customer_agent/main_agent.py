@@ -9,9 +9,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langsmith import traceable
 
 # 서브 에이전트 및 DB 임포트
-from agent.asset_insight_agent import AssetInsightAgent
-from agent.churn_risk_agent import ChurnRiskAgent
-from agent.product_matching_agent import ProductMatchingAgent
+from .asset_insight_agent import AssetInsightAgent
+from .churn_risk_agent import ChurnRiskAgent
+from .product_matching_agent import ProductMatchingAgent
 from tool import tools
 
 logger = logging.getLogger("IntegratedCustomerAgent")
