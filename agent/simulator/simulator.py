@@ -43,6 +43,7 @@ from agent.simulator.tools import (
     get_customer_product_matching,
     format_products_context,
 )
+from agent.simulator.utils.s3_storage import s3_read_text, s3_read_json, s3_write_json
 
 # 1. State Definition for Simulator Agent
 class SimulatorState(TypedDict):
